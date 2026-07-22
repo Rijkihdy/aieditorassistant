@@ -1,0 +1,112 @@
+Prompt buku Fiksi
+Cover depan: 14,5 cm × 21,5 cm
+
+Punggung buku (spine):(disesuaikan dengan tebal bukunya) Rumusnya 0,058 x jumlah halaman buku
+
+Cover belakang: 14,5 cm × 21,5 cm
+
+Total lebar layout: 30,1 cm × 21,5 cm
+
+sinopsis :(sesuaikan)
+
+Ukuran font synopsis: 13pt (Montserrat)
+
+kategori buku : (Sesuaikan)
+
+Nama Penulis: (Sesuaikan)
+
+nama penulis bisa dibagian atas atau Bawah buku dan jangan sampai melewati margin
+
+Judul Buku : (Sesuaikan)
+
+Sub judul : (Sesuaikan)
+
+Margin aman: 1,2 cm di setiap sisi cover depan dan belakang
+
+jangan ada gambar ISBN
+
+nama penulis jangan  sampai melewati margindan dan kalau bisa jangan terlalu Bawah juga
+
+ilustrasi yang tidak boleh adalah manusia dan hewan (Kecuali Siluet Hitam saja)
+
+Sinopsis: (sesuaikan sinopsis yang sudah diberikan oleh penulis) sinopsis menggunakan alignment text justify
+
+tulisan sinopsis berada di bagian tengah cover belakang
+
+bagian Bawah dari cover belakang buku jangan ada icon atau gambar tambahan apapun
+
+dibagian punggung cukup ada tulisan judul saja, jangan ada nama penulis dan sub judul, serta diletakkan dibagian tengah
+
+tulisan sinopsis berada di bagian tengah cover belakang
+
+Desain harus menyatu secara visual dari cover belakang, punggung, hingga cover depan tanpa terputus dan warnanya juga menyatu agar tidak terlihat putus.
+Buat desain cover buku non-fiksi profesional dengan layout full wrap (cover depan, punggung, dan cover belakang) yang menyatu secara visual tanpa terputus.
+Karakteristik Desain
+Sinematik, imajinatif, dan emosional.
+Mampu membangun rasa penasaran dan ketertarikan pembaca dalam beberapa detik pertama.
+Mencerminkan genre, suasana, konflik, dan tema utama cerita.
+Cocok untuk dipajang di toko buku fisik maupun marketplace digital.
+Desain profesional dengan kualitas penerbit mayor.
+Mudah dikenali dan tetap menarik dalam ukuran thumbnail.
+Cover Depan
+Menampilkan ilustrasi atau visual utama yang merepresentasikan dunia cerita, karakter, konflik, atau suasana novel.
+Judul menjadi fokus utama dengan tipografi yang sesuai dengan genre.
+Nama penulis ditampilkan secara profesional dan proporsional.
+Komposisi visual mampu membangun emosi, misteri, petualangan, ketegangan, romansa, fantasi, atau nuansa sesuai isi cerita.
+Menggunakan visual yang kuat dan relevan dengan narasi.
+Hindari elemen yang tidak memiliki hubungan dengan cerita.
+Punggung Buku
+Terhubung secara visual dengan cover depan dan belakang.
+Menampilkan judul buku dan nama penulis dengan jelas.
+Elemen visual utama dapat berlanjut secara halus melewati punggung buku untuk menciptakan kesan satu kesatuan desain.
+Cover Belakang
+Menyediakan area khusus untuk sinopsis dengan tingkat keterbacaan tinggi.
+Tata letak bersih dan profesional.
+Menyediakan ruang untuk barcode, ISBN, logo penerbit, dan testimoni atau endorsement (opsional).
+Tetap mempertahankan suasana visual yang konsisten dengan cover depan.
+Elemen ilustrasi atau latar belakang berlanjut secara harmonis dari cover depan melalui punggung hingga cover belakang.
+Gaya Visual
+Premium fiction book cover.
+Cinematic storytelling illustration.
+Editorial publishing quality.
+Professional typography.
+Strong emotional impact.
+High visual appeal.
+Genre-appropriate art direction.
+Dynamic composition.
+Balanced use of colors, lighting, and negative space.
+Bookstore bestseller quality.
+Suitable for physical bookstores and online marketplaces.
+Warna
+Disesuaikan dengan genre dan suasana cerita:
+Fantasy: biru gelap, emas, ungu, cahaya magis.
+Romance: warna hangat, pastel, atau elegan.
+Thriller/Mystery: hitam, merah gelap, biru tua, kontras tinggi.
+Horror: gelap, suram, atmosferik.
+Historical Fiction: warna klasik dan kaya tekstur.
+Science Fiction: futuristik, neon, metalik, kosmik.
+Cover depan, punggung, dan cover belakang harus memiliki transisi visual yang menyatu dan terasa sebagai satu karya utuh.
+Kualitas
+High resolution.
+300 DPI.
+Print-ready.
+Professional publishing quality.
+Sharp typography.
+Detailed illustration.
+Visually stunning.
+Bestseller novel cover style.
+Full wrap-around design.
+Seamless front cover, spine, and back cover integration.
+Tambahan untuk AI Image Generator
+Ultra-detailed.
+Award-winning book cover design.
+Premium publishing standard.
+Professional lighting and composition.
+Highly marketable.
+Commercial publishing quality.
+Full wrap book cover layout.
+Front cover, spine, and back cover connected seamlessly.
+No watermark.
+No mockup.
+No cropped elements.
+Print-ready cover artwork.
