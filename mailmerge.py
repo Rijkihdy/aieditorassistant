@@ -221,7 +221,14 @@ def _insert_sinopsis(document: Document, sinopsis_text: str) -> None:
 
 
 def _normalize_spacing(text: str) -> str:
-    """Rapikan spasi ganda/berlebih jadi satu spasi, buang spasi awal-akhir."""
+    """Rapikan spasi ganda/berlebih jadi satu spasi, buang spasi awal-akhir.
+
+    Juga buang sisa artefak nomor halaman Daftar Isi ('\\t1' dsb di ujung
+    baris) yang kadang ikut kebawa kalau naskah sumbernya berupa Daftar Isi
+    ketikan manual (bukan field TOC Word) yang lalu ke-copy-paste sebagai
+    teks biasa.
+    """
+    text = re.sub(r"\t+\d+\s*$", "", text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 

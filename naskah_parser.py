@@ -232,6 +232,32 @@ def _paragraph_image_blobs(paragraph) -> list[bytes]:
     return blobs
 
 
+# Judul bab/sub-bab asli selalu pendek (nama bab, bukan kalimat utuh).
+# Kalau paragraf ber-style Heading ternyata sepanjang ini atau punya banyak
+# tanda titik (ciri paragraf naratif biasa, bukan judul), style-nya
+# kemungkinan besar salah ketik/salah pilih oleh penulis di Word -- JANGAN
+# dipromosikan jadi bab baru walau style-nya "Heading". Tanpa pengaman ini,
+# satu paragraf isi yang kebetulan ke-style Heading akan: (1) dianggap bab
+# baru sendiri lengkap dengan page break, DAN (2) ikut tersedot ke field
+# Daftar Isi otomatis Word (yang men-scan semua Heading 1-3), muncul sebagai
+# entri TOC yang panjang/aneh dan bikin nomor halamannya dobel/wrap.
+_STYLE_HEADING_MAX_LEN = 120
+_STYLE_HEADING_MAX_SENTENCES = 1
+
+
+def _looks_like_real_heading_text(text: str) -> bool:
+    """True kalau teks ini pantas jadi judul bab/sub-bab (pendek, bukan
+    paragraf naratif utuh dengan banyak kalimat)."""
+    if len(text) > _STYLE_HEADING_MAX_LEN:
+        return False
+    # Hitung tanda akhir kalimat ('.', '!', '?') -- judul asli biasanya tidak
+    # punya titik sama sekali, atau paling banyak satu di ujung.
+    sentence_enders = text.count(".") + text.count("!") + text.count("?")
+    if sentence_enders > _STYLE_HEADING_MAX_SENTENCES:
+        return False
+    return True
+
+
 def _paragraph_heading_text(paragraph) -> str | None:
     """
     Tentukan apakah sebuah paragraf python-docx adalah judul bab/sub-bab.
@@ -240,6 +266,8 @@ def _paragraph_heading_text(paragraph) -> str | None:
       1. STYLE Word paragraf tersebut Heading 1/Heading 2/.../Title — ini
          menangkap kasus penulis MEMANG memformat judul babnya sebagai
          heading di Word, apapun teksnya (tidak harus diawali kata "Bab").
+         TAPI hanya dipercaya kalau teksnya memang terlihat seperti judul
+         (pendek, bukan paragraf naratif) -- lihat _looks_like_real_heading_text.
       2. Pola teks klasik "Bab N" (lewat is_heading_line) — tetap dipakai
          untuk naskah yang judul babnya cuma teks biasa tanpa style heading.
     """
@@ -253,7 +281,7 @@ def _paragraph_heading_text(paragraph) -> str | None:
     style_name = (paragraph.style.name if paragraph.style is not None else "") or ""
     is_style_heading = style_name.startswith("Heading") or style_name == "Title"
 
-    if is_style_heading:
+    if is_style_heading and _looks_like_real_heading_text(text):
         return HEADING_MARKER + text
     if is_heading_line(text):
         return text
