@@ -9,6 +9,42 @@ Aplikasi internal berbasis web (Streamlit) untuk membantu tim editor:
   5. Menyesuaikan format dinamis & generate dokumen final (.docx)
 
 Jalankan dengan:  streamlit run app.py
+
+CATATAN TEMA (penting):
+App ini didesain untuk SELALU tampil dark-green (.aig-*, gradient hijau
+tua), TIDAK PEDULI apakah tema browser/OS user Light atau Dark.
+
+Sebelumnya ini murni ditangani lewat CSS override manual, tapi beberapa
+widget native Streamlit (terutama file uploader) merender sebagian
+elemennya lewat variabel tema Streamlit sendiri -- yang tetap ikut
+Light kalau tema global tidak dipaksa -- sehingga CSS manual kalah dan
+elemen jadi tidak kebaca (putih di atas putih). Untuk itu tema Streamlit
+di app INI sekarang dipaksa Dark lewat .streamlit/config.toml (base="dark"
++ palet warna hijau tua yang sama dengan CSS di bawah), dan menu
+hamburger (Settings > Theme) disembunyikan (toolbarMode="minimal") biar
+user tidak bisa switch balik ke Light dan merusak kontras. Ini hanya
+berlaku untuk app ini -- app Streamlit lain milik user tetap bebas pakai
+tema pilihan masing-masing.
+
+TAMBAHAN (fix "input masih ikut tema browser"):
+Selain widget Streamlit, elemen FORM NATIVE milik browser sendiri
+(spinner number_input, checkbox/radio bawaan OS, scrollbar, autofill
+popup) tidak diatur oleh tema Streamlit sama sekali -- itu dikontrol
+browser lewat CSS property `color-scheme`. Kalau properti ini tidak
+di-set eksplisit, browser tetap merender sebagian kontrol native itu
+ikut preferensi OS/browser (Light), walau `.streamlit/config.toml`
+sudah dipaksa Dark. Makanya sekarang ditambahkan `color-scheme: dark`
+secara eksplisit di :root/html/body/.stApp, plus `accent-color` hijau
+untuk checkbox/radio/range native, supaya BENAR-BENAR tidak ada elemen
+input yang bisa balik ke Light lagi.
+
+CSS override di bawah tetap dipertahankan sebagai lapisan kedua untuk
+styling kartu/pill custom (.aig-*) dan sebagai jaga-jaga tambahan pada
+dropdown popover selectbox, radio/checkbox indicator, dan slider --
+karena elemen-elemen itu dirender BaseWeb dengan class ter-generate
+(emotion-cache-xxxx) yang beda-beda tiap versi Streamlit, sehingga CSS
+di bawah menarget banyak variasi selector (data-baseweb, data-testid,
+role) sekaligus supaya tetap kena di berbagai versi.
 """
 import io
 import os
@@ -46,6 +82,25 @@ init_db()
 st.markdown(
     """
     <style>
+/* ========================================================================
+   PAKSA color-scheme BROWSER ke dark -- ini kunci supaya kontrol native
+   (spinner number_input, checkbox/radio bawaan OS, scrollbar, autofill,
+   dropdown-arrow native <select>) TIDAK PERNAH lagi ikut preferensi
+   Light/Dark browser atau OS user. Tanpa baris ini, config.toml Streamlit
+   saja tidak cukup karena color-scheme adalah properti CSS terpisah yang
+   dibaca langsung oleh rendering engine browser.
+   ======================================================================== */
+:root, html, body, .stApp{
+    color-scheme: dark !important;
+}
+
+/* accent-color menyamakan warna checkbox/radio/range NATIVE (bukan
+   BaseWeb) ke hijau tema, kalau-kalau ada yang lolos jadi biru/abu
+   default browser */
+:root, html, body, .stApp{
+    accent-color: #53d88d;
+}
+
 .stApp {
     background: radial-gradient(
         ellipse at 15% 0%,
@@ -167,10 +222,16 @@ section[data-testid="stSidebar"] {
 }
 
 div[data-testid="stTextArea"] textarea{
-    background:rgba(255,255,255,.05);
-    color:white;
-    border:1px solid rgba(126,240,180,.25);
-    border-radius:12px;
+    background:rgba(255,255,255,.05) !important;
+    color:#eefcf6 !important;
+    border:1px solid rgba(126,240,180,.25) !important;
+    border-radius:12px !important;
+}
+/* Div pembungkus BaseWeb di belakang textarea (kadang masih putih
+   dan nembus dari sisi/pinggir kalau tidak ikut ditarget) */
+div[data-testid="stTextArea"] > div,
+div[data-testid="stTextArea"] div[data-baseweb="textarea"]{
+    background:rgba(255,255,255,.05) !important;
 }
 
 div[data-baseweb="select"]{
@@ -181,11 +242,6 @@ div[data-baseweb="select"]{
 .stButton > button{
     border-radius:10px;
     font-weight:600;
-    transition:.25s;
-}
-
-.stButton > button:hover{
-    transform:translateY(-2px);
 }
 
 .stButton > button[kind="primary"]{
@@ -194,8 +250,414 @@ div[data-baseweb="select"]{
     border:none;
 }
 
+/* Tombol sekunder (bukan primary) -- sebelumnya tidak ditarget sama
+   sekali sehingga bisa ikut warna default tema (biru/merah) tergantung
+   Light/Dark. Sekarang disamakan ke gaya hijau-outline. */
+.stButton > button:not([kind="primary"]){
+    background:rgba(126,240,180,.10) !important;
+    color:#eefcf6 !important;
+    border:1px solid rgba(126,240,180,.35) !important;
+}
+
+/* Tombol submit form (st.form_submit_button) dan tombol unduh
+   (st.download_button) -- keduanya punya wrapper testid TERPISAH dari
+   .stButton biasa di versi Streamlit terbaru, jadi kalau tidak
+   ditarget eksplisit, teks/border-nya bisa lolos ikut warna tema
+   Light/Dark bawaan browser. */
+div[data-testid="stFormSubmitButton"] button,
+div[data-testid="stDownloadButton"] button{
+    border-radius:10px !important;
+    font-weight:600 !important;
+}
+div[data-testid="stFormSubmitButton"] button[kind="primary"]{
+    background:linear-gradient(135deg,#53d88d,#1ea96c) !important;
+    color:white !important;
+    border:none !important;
+}
+div[data-testid="stDownloadButton"] button{
+    background:linear-gradient(135deg,#53d88d,#1ea96c) !important;
+    color:white !important;
+    border:none !important;
+}
+div[data-testid="stDownloadButton"] button *,
+div[data-testid="stFormSubmitButton"] button *{
+    color:white !important;
+}
+
 div[data-testid="stAlert"]{
     border-radius:12px;
+}
+
+/* --------------------------------------------------------------------
+   Kontras teks terlepas dari tema Streamlit user (Light/Dark/System).
+   -------------------------------------------------------------------- */
+div[data-testid="stTextInput"] label,
+div[data-testid="stTextArea"] label,
+div[data-testid="stNumberInput"] label,
+div[data-testid="stSelectbox"] label,
+div[data-testid="stRadio"] label,
+div[data-testid="stFileUploader"] label,
+div[data-testid="stFileUploaderDropzoneInstructions"],
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stCaptionContainer"],
+div[data-testid="stExpander"] summary,
+div[data-testid="stExpander"] summary p,
+div[data-testid="stMetricLabel"],
+div[data-testid="stMetricValue"],
+div[data-testid="stTabs"] button p,
+div[data-testid="stRadio"] div[role="radiogroup"] label p,
+div[data-testid="stForm"] label,
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp p, .stApp span, .stApp label{
+    color:#eefcf6 !important;
+}
+
+div[data-testid="stCaptionContainer"]{
+    color:#b9e7d1 !important;
+}
+
+div[data-testid="stFileUploaderDropzoneInstructions"] span,
+div[data-testid="stFileUploaderDropzoneInstructions"] small{
+    color:#cfeee0 !important;
+}
+
+/* Placeholder text pada input/textarea tetap kebaca */
+div[data-testid="stTextInput"] input::placeholder,
+div[data-testid="stTextArea"] textarea::placeholder{
+    color:#9fd0b8 !important;
+    opacity:1;
+}
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input{
+    color:#eefcf6 !important;
+    background:rgba(255,255,255,.05) !important;
+    border:1px solid rgba(126,240,180,.25) !important;
+    border-radius:10px !important;
+}
+
+/* Div pembungkus BaseWeb di belakang input (mis. "base-input"),
+   kadang masih putih dan nembus dari sisi/pinggir kotak angka/teks
+   kalau cuma elemen <input>-nya yang ditarget */
+div[data-testid="stTextInput"] div[data-baseweb="input"],
+div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+div[data-testid="stNumberInput"] div[data-baseweb="input"],
+div[data-testid="stNumberInput"] div[data-baseweb="base-input"]{
+    background:rgba(255,255,255,.05) !important;
+}
+
+/* Selector cadangan generik: div pembungkus langsung di bawah
+   stNumberInput/stTextInput, apapun struktur internal BaseWeb-nya
+   (beda versi Streamlit beda struktur), plus catch-all terakhir
+   untuk elemen <input>/<select> di mana saja dalam app supaya tidak
+   ada lagi kotak putih yang lolos. */
+div[data-testid="stNumberInput"] > div,
+div[data-testid="stTextInput"] > div{
+    background:rgba(255,255,255,.05) !important;
+    border-radius:10px !important;
+}
+.stApp input,
+.stApp select{
+    background-color:rgba(255,255,255,.05) !important;
+    color:#eefcf6 !important;
+}
+
+/* --------------------------------------------------------------------
+   Selectbox tertutup: teks value yang lagi kepilih & panah ikonnya.
+   -------------------------------------------------------------------- */
+div[data-baseweb="select"] *{
+    color:#eefcf6 !important;
+    fill:#eefcf6 !important;
+}
+div[data-baseweb="select"] > div{
+    background:rgba(255,255,255,.05) !important;
+    border-color:rgba(126,240,180,.25) !important;
+}
+
+/* --------------------------------------------------------------------
+   Dropdown popover selectbox: menarget BANYAK varian selector sekaligus
+   karena struktur DOM-nya beda-beda tergantung versi Streamlit.
+   Elemen ini dirender lewat portal, jadi TIDAK diberi prefix .stApp --
+   ditarget langsung dari root dokumen supaya tetap kena.
+   -------------------------------------------------------------------- */
+ul[data-testid="stSelectboxVirtualDropdown"],
+div[data-baseweb="popover"] div[data-baseweb="menu"],
+div[data-baseweb="popover"] ul,
+div[data-baseweb="menu"],
+ul[role="listbox"]{
+    background-color:#0e2e25 !important;
+    border:1px solid rgba(126,240,180,.25) !important;
+}
+
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+div[data-baseweb="popover"] li,
+div[data-baseweb="menu"] li,
+li[role="option"],
+div[role="option"]{
+    background-color:transparent !important;
+    color:#eefcf6 !important;
+}
+
+ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
+div[data-baseweb="popover"] li:hover,
+div[data-baseweb="menu"] li:hover,
+li[role="option"]:hover,
+div[role="option"]:hover{
+    background-color:rgba(126,240,180,.18) !important;
+}
+
+ul[data-testid="stSelectboxVirtualDropdown"] *,
+div[data-baseweb="popover"] *,
+div[data-baseweb="menu"] *{
+    color:#eefcf6 !important;
+}
+
+/* --------------------------------------------------------------------
+   Radio & checkbox: lingkaran/kotak indikator dan teks labelnya.
+   Ditambah state checked/hover eksplisit hijau supaya tidak jatuh ke
+   warna primary default tema (yang bisa beda kalau Light/Dark bocor).
+   -------------------------------------------------------------------- */
+div[data-baseweb="radio"] label,
+div[data-baseweb="checkbox"] label{
+    color:#eefcf6 !important;
+}
+div[data-baseweb="radio"] svg,
+div[data-baseweb="checkbox"] svg{
+    fill:#eefcf6 !important;
+}
+div[data-baseweb="radio"] [aria-checked="true"] svg,
+div[data-baseweb="checkbox"] [aria-checked="true"] svg,
+div[data-baseweb="radio"] [data-checked="true"] svg,
+div[data-baseweb="checkbox"] [data-checked="true"] svg{
+    fill:#53d88d !important;
+}
+div[data-baseweb="radio"] div[role="radio"],
+div[data-baseweb="checkbox"] span{
+    border-color:rgba(126,240,180,.45) !important;
+}
+
+/* --------------------------------------------------------------------
+   Slider (kalau dipakai): track, handle, dan angka label.
+   -------------------------------------------------------------------- */
+div[data-baseweb="slider"] *{
+    color:#eefcf6 !important;
+}
+div[data-baseweb="slider"] div[role="slider"]{
+    background-color:#53d88d !important;
+}
+
+/* --------------------------------------------------------------------
+   File uploader: dropzone (kotak drag & drop + tombol Browse files).
+   CATATAN: elemen ini dirender sebagai <section>, bukan <div> -- kalau
+   cuma ditarget lewat div[...] selector-nya tidak pernah kena sama sekali.
+   -------------------------------------------------------------------- */
+section[data-testid="stFileUploaderDropzone"],
+div[data-testid="stFileUploaderDropzone"]{
+    background:rgba(255,255,255,.05) !important;
+    border:1px dashed rgba(126,240,180,.35) !important;
+    border-radius:12px !important;
+}
+section[data-testid="stFileUploaderDropzone"] *,
+div[data-testid="stFileUploaderDropzone"] *{
+    color:#eefcf6 !important;
+    fill:#eefcf6 !important;
+}
+section[data-testid="stFileUploaderDropzone"] *:not(button),
+div[data-testid="stFileUploaderDropzone"] *:not(button){
+    background:transparent !important;
+}
+div[data-testid="stFileUploaderDropzone"] small,
+div[data-testid="stFileUploaderDropzoneInstructions"] small{
+    color:#bfe9d3 !important;
+}
+div[data-testid="stFileUploaderDropzone"] button,
+div[data-testid="stFileUploader"] button{
+    background:rgba(126,240,180,.16) !important;
+    color:#eefcf6 !important;
+    border:1px solid rgba(126,240,180,.35) !important;
+    border-radius:8px !important;
+}
+
+/* File uploader: baris file yang sudah ter-upload (nama, ukuran, ikon hapus) */
+div[data-testid="stFileUploaderFile"],
+div[data-testid="stFileUploaderFileData"]{
+    background:rgba(255,255,255,.05) !important;
+    border:1px solid rgba(126,240,180,.25) !important;
+    border-radius:12px !important;
+}
+div[data-testid="stFileUploaderFile"] *,
+div[data-testid="stFileUploaderFileData"] *{
+    color:#eefcf6 !important;
+    fill:#eefcf6 !important;
+}
+small[data-testid="stFileUploaderFileErrorMessage"]{
+    color:#ffb4b4 !important;
+}
+
+/* --------------------------------------------------------------------
+   Label widget di versi Streamlit yang lebih baru (stWidgetLabel),
+   tidak selalu ketangkep selector lama div[data-testid="st..."] label
+   -------------------------------------------------------------------- */
+label[data-testid="stWidgetLabel"] p,
+label[data-testid="stWidgetLabel"] span,
+div[data-testid="stWidgetLabel"] p,
+div[data-testid="stWidgetLabel"] span{
+    color:#eefcf6 !important;
+}
+
+/* Tombol +/- pada number_input */
+div[data-testid="stNumberInput"] button{
+    background:rgba(255,255,255,.05) !important;
+    color:#eefcf6 !important;
+    border:1px solid rgba(126,240,180,.25) !important;
+}
+div[data-testid="stNumberInput"] button svg{
+    fill:#eefcf6 !important;
+}
+
+/* Reinforce warna teks isian, jaga-jaga tema Light user menang specificity */
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input{
+    color:#eefcf6 !important;
+}
+
+/* Expander (mis. "Sinopsis") beserta ikon panahnya */
+div[data-testid="stExpander"] details{
+    background:rgba(255,255,255,.04) !important;
+    border:1px solid rgba(126,240,180,.14) !important;
+    border-radius:12px !important;
+}
+div[data-testid="stExpander"] summary svg{
+    fill:#eefcf6 !important;
+}
+
+/* Alert / info box (mis. "Naskah siap diproses...") */
+div[data-testid="stAlert"]{
+    background:rgba(255,255,255,.06) !important;
+    border:1px solid rgba(126,240,180,.2) !important;
+}
+div[data-testid="stAlert"] *{
+    color:#eefcf6 !important;
+}
+
+/* --------------------------------------------------------------------
+   Tabs (dipakai di halaman hasil analisis, "Opsi 1/2/3") -- indikator
+   garis bawah tab aktif kadang ikut warna primary tema bawaan.
+   -------------------------------------------------------------------- */
+div[data-testid="stTabs"] button[aria-selected="true"]{
+    color:#7ef0b4 !important;
+}
+div[data-baseweb="tab-highlight"]{
+    background-color:#53d88d !important;
+}
+div[data-baseweb="tab-border"]{
+    background-color:rgba(126,240,180,.18) !important;
+}
+
+/* Blok kode (st.code untuk "Copy Teks" blurb) */
+div[data-testid="stCodeBlock"] pre,
+div[data-testid="stCodeBlock"] code{
+    background-color:rgba(255,255,255,.05) !important;
+    color:#eefcf6 !important;
+    border:1px solid rgba(126,240,180,.18) !important;
+}
+
+/* ========================================================================
+   FINAL OVERRIDE -- sengaja diletakkan PALING AKHIR di stylesheet supaya
+   menang kalau ada "dasi" (tie) specificity dengan CSS bawaan Streamlit.
+   Prefix "html body" dipakai supaya specificity-nya lebih tinggi dari
+   selector Streamlit sendiri. Ini menutup semua kasus yang masih lolos:
+   Cover Generator, Kategori Genre, dan kotak Margin Formatter.
+
+   -webkit-text-fill-color ditambahkan karena Chrome/Safari kadang
+   menerapkan warna teks lewat properti ini (bukan cuma "color"), khusus-
+   nya untuk input yang nilainya di-set lewat value=... seperti pada
+   field Cover Generator -- kalau cuma "color" yang ditarget, teksnya
+   tetap invisible walau CSS sudah "match".
+   ======================================================================== */
+html body .stApp input,
+html body .stApp textarea,
+html body .stApp select{
+    background-color:rgba(255,255,255,.06) !important;
+    color:#eefcf6 !important;
+    -webkit-text-fill-color:#eefcf6 !important;
+    border-color:rgba(126,240,180,.25) !important;
+}
+
+html body .stApp input:disabled,
+html body .stApp textarea:disabled,
+html body .stApp input[readonly],
+html body .stApp textarea[readonly]{
+    background-color:rgba(255,255,255,.04) !important;
+    color:#cfeee0 !important;
+    -webkit-text-fill-color:#cfeee0 !important;
+    opacity:1 !important;
+}
+
+/* Fokus (klik/tab ke dalam field) -- browser sering kasih outline biru
+   bawaan sendiri (bukan dari Streamlit) terlepas dari tema apapun,
+   ini yang bikin "kedip biru" kalau user klik input. Diganti hijau. */
+html body .stApp input:focus,
+html body .stApp textarea:focus,
+html body .stApp select:focus,
+html body .stApp div[data-baseweb="input"]:focus-within,
+html body .stApp div[data-baseweb="base-input"]:focus-within,
+html body .stApp div[data-baseweb="textarea"]:focus-within,
+html body .stApp div[data-baseweb="select"]:focus-within{
+    outline:none !important;
+    border-color:#53d88d !important;
+    box-shadow:0 0 0 1px rgba(83,216,141,.45) !important;
+}
+
+html body .stApp div[data-baseweb="input"],
+html body .stApp div[data-baseweb="base-input"],
+html body .stApp div[data-baseweb="textarea"]{
+    background-color:rgba(255,255,255,.06) !important;
+}
+
+html body .stApp div[data-baseweb="select"] > div,
+html body .stApp div[data-baseweb="select"] *{
+    background-color:rgba(255,255,255,.06) !important;
+    color:#eefcf6 !important;
+}
+
+/* Radio pill (Jenis Buku, Sumber Sinopsis dll) */
+html body .stApp div[data-baseweb="radio"] *,
+html body .stApp div[role="radiogroup"] *{
+    color:#eefcf6 !important;
+}
+
+/* Kotak metric (mis. "Lebar Spine") */
+html body .stApp div[data-testid="stMetric"]{
+    background-color:rgba(255,255,255,.04) !important;
+    border:1px solid rgba(126,240,180,.14) !important;
+    border-radius:12px !important;
+    padding:10px 14px !important;
+}
+
+/* Cabut semua efek hover custom (transform/scale/shadow) -- tombol
+   statis saja, tidak ada animasi apapun saat di-hover */
+html body .stApp button:hover,
+html body .stApp .stButton > button:hover{
+    transform:none !important;
+    box-shadow:none !important;
+    scale:1 !important;
+}
+
+/* Scrollbar (Chrome/Edge/Safari) -- tanpa ini scrollbar tetap abu-abu
+   terang bawaan OS meskipun color-scheme sudah dark, kalau browser
+   lama/tertentu tidak menghormati color-scheme untuk elemen ini. */
+html body .stApp ::-webkit-scrollbar{
+    width:10px;
+    height:10px;
+}
+html body .stApp ::-webkit-scrollbar-track{
+    background:#0e2e25;
+}
+html body .stApp ::-webkit-scrollbar-thumb{
+    background-color:rgba(126,240,180,.35);
+    border-radius:8px;
 }
 </style>
     """,
@@ -234,6 +696,7 @@ defaults = {
     "mm_judul_naskah": "",
     "mm_tahun_cetak": "Mei 2025",
     "mm_kata_pengantar": "",
+    "mm_tentang_penulis": "",
     "fmt_heading_alignment": "left",
     "sinopsis_mode": "Tulis/Upload Manual",
     "sinopsis_manual_text": "",
@@ -258,7 +721,7 @@ def convert_docx_bytes(uploaded_file, config: dict) -> bytes:
 
     with open(tmp_output_path, "rb") as f:
         formatted_bytes = f.read()
-    
+
     st.session_state.formatted_docx_bytes = formatted_bytes
     return formatted_bytes
 
@@ -293,7 +756,7 @@ def serialize_editor_sections(sections: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def generate_book_bytes(template_file, meta: dict, chapter_title: str, kata_pengantar_text: str, naskah_text: str, format_config: dict | None = None, source_docx_bytes: bytes | None = None, qrcbn: str = "", sinopsis_text: str = "") -> bytes:
+def generate_book_bytes(template_file, meta: dict, chapter_title: str, kata_pengantar_text: str, naskah_text: str, format_config: dict | None = None, source_docx_bytes: bytes | None = None, qrcbn: str = "", sinopsis_text: str = "", tentang_penulis_text: str = "") -> bytes:
     if template_file is not None:
         if hasattr(template_file, "seek"):
             template_file.seek(0)
@@ -320,6 +783,7 @@ def generate_book_bytes(template_file, meta: dict, chapter_title: str, kata_peng
         source_docx_bytes=source_docx_bytes,
         qrcbn=qrcbn,
         sinopsis_text=sinopsis_text,
+        tentang_penulis_text=tentang_penulis_text,
     )
 
     with open(output_path, "rb") as f:
@@ -705,6 +1169,13 @@ if st.session_state.page == "dashboard":
                     key="mm_kata_pengantar"
                 )
 
+                mm_tentang_penulis = st.text_area(
+                    "Isi Tentang Penulis (Opsional)",
+                    height=120,
+                    placeholder="Ceritakan sedikit tentang penulis: latar belakang, karya sebelumnya, dll...",
+                    key="mm_tentang_penulis"
+                )
+
                 submitted_format = st.form_submit_button("📄 Format & Siapkan Dokumen", type="primary", use_container_width=True)
                 if submitted_format:
                     if count_words(st.session_state.raw_text) < 5:
@@ -777,6 +1248,7 @@ if st.session_state.page == "dashboard":
                                 source_docx_bytes=source_docx_bytes or st.session_state.formatted_docx_bytes,
                                 qrcbn=mm_qrcbn,
                                 sinopsis_text=final_sinopsis_text,
+                                tentang_penulis_text=mm_tentang_penulis,
                             )
                             st.session_state["generated_book_bytes"] = book_bytes
                             st.session_state["generated_book_name"] = f"{mm_judul_naskah.strip() or 'naskah'}_final.docx"

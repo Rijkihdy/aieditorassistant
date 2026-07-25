@@ -72,7 +72,15 @@ def _apply_margins_to_all_sections(document: Document, config: dict) -> None:
 
 
 def _normalize_document_text(document: Document, config: dict) -> None:
-    """Apply font settings, line spacing, and paragraph alignment globally."""
+    """Apply font settings, line spacing, and paragraph alignment globally.
+
+    PENGECUALIAN PENTING: paragraf di halaman COVER dan halaman IDENTITAS
+    BUKU (semua yang ada SEBELUM heading "KATA PENGANTAR") sengaja TIDAK
+    ditimpa alignment-nya. Halaman-halaman itu didesain center-aligned di
+    template, dan kalau alignment isi naskah (biasanya "justify") diterapkan
+    global ke SEMUA paragraf, halaman cover/identitas ikut berubah jadi rata
+    kiri-kanan padahal seharusnya tetap center.
+    """
     font_name = config.get("font_name")
     font_size_pt = config.get("font_size_pt")
     line_spacing = config.get("line_spacing")
@@ -85,16 +93,21 @@ def _normalize_document_text(document: Document, config: dict) -> None:
         "justify": WD_PARAGRAPH_ALIGNMENT.JUSTIFY,
     }
 
+    in_front_matter = True
+
     for paragraph in _iter_all_paragraphs(document):
         if _is_field_paragraph(paragraph):
             continue
 
+        if in_front_matter and paragraph.text.strip().upper() == "KATA PENGANTAR":
+            in_front_matter = False
+
         is_heading = _is_heading_style(paragraph)
 
-        if line_spacing is not None:
+        if line_spacing is not None and not in_front_matter:
             paragraph.paragraph_format.line_spacing = line_spacing
 
-        if alignment:
+        if alignment and not in_front_matter:
             paragraph.alignment = alignment_map.get(alignment.lower(), paragraph.alignment)
 
         for run in paragraph.runs:
@@ -216,32 +229,42 @@ def _insert_custom_header(document: Document, config: dict) -> None:
 
 
 def _inject_dynamic_page_numbering(document: Document) -> None:
-    """Add automatic page numbering footers and reset numbering per section."""
+    """Add automatic page numbering footers and reset numbering per section.
+
+    Dokumen final bisa punya BANYAK section (bukan cuma 1-2): tiap bab baru
+    disisipkan sebagai section break tersendiri (lihat mailmerge.py) supaya
+    tiap bab mulai di halaman ganjil baru. Sebelumnya fungsi ini cuma
+    menangani section pertama & kedua secara eksplisit — section ketiga dan
+    seterusnya (bab ke-2 dst.) tidak pernah diberi nomor halaman ("belum
+    berjalan"). Sekarang SEMUA section diproses:
+      - Section pertama = halaman depan (cover, identitas, kata pengantar,
+        daftar isi) -> angka romawi kecil (i, ii, iii, ...).
+      - Section kedua dan seterusnya (isi naskah per-bab + tentang penulis)
+        -> angka arab, dimulai dari 1 HANYA di section kedua; section-section
+        setelahnya TIDAK di-restart supaya penomoran berlanjut wajar dan
+        tidak "loncat balik ke 1" / dobel di tiap pergantian bab.
+    """
     sections = document.sections
 
     if len(sections) == 0:
         return
 
     if len(sections) == 1:
-        section_nodes = _count_section_nodes(document)
-        if section_nodes > 1:
-            # Jika python-docx hanya melihat 1 section, namun raw XML berisi lebih dari satu
-            # w:sectPr, gunakan fallback tanpa memaksa format section kedua.
-            _set_section_page_number_type(sections[0], fmt="decimal", start=1)
-            _set_footer_page_number(sections[0].footer)
-            return
-
         _set_section_page_number_type(sections[0], fmt="decimal", start=1)
         _set_footer_page_number(sections[0].footer)
         return
 
-    # Section 1: lowerRoman starting from i
+    # Section pertama: halaman depan, angka romawi kecil.
     _set_section_page_number_type(sections[0], fmt="lowerRoman", start=1)
     _set_footer_page_number(sections[0].footer)
 
-    # Section 2: decimal starting from 1
-    _set_section_page_number_type(sections[1], fmt="decimal", start=1)
-    _set_footer_page_number(sections[1].footer)
+    # Section kedua dst.: angka arab. Restart ke 1 cuma di section kedua
+    # (awal isi naskah); section berikutnya melanjutkan penomoran otomatis
+    # (start=None -> atribut w:start tidak dipasang sama sekali).
+    for idx in range(1, len(sections)):
+        start = 1 if idx == 1 else None
+        _set_section_page_number_type(sections[idx], fmt="decimal", start=start)
+        _set_footer_page_number(sections[idx].footer)
 
 
 def _count_section_nodes(document: Document) -> int:
@@ -271,8 +294,14 @@ _SECTPR_ELEMENTS_AFTER_PGNUMTYPE = (
 )
 
 
-def _set_section_page_number_type(section, fmt: str, start: int) -> None:
-    """Set the page number format and starting value for a section."""
+def _set_section_page_number_type(section, fmt: str, start: int | None) -> None:
+    """Set the page number format for a section.
+
+    Kalau `start` diisi (int), section ini akan RESTART penomoran mulai dari
+    angka tersebut. Kalau `start` None, atribut w:start sengaja TIDAK
+    dipasang sama sekali sehingga Word melanjutkan penomoran dari section
+    sebelumnya (dipakai untuk bab ke-2 dst. supaya tidak restart/dobel).
+    """
     sect_pr = section._sectPr
     existing = sect_pr.find(qn("w:pgNumType"))
     if existing is not None:
@@ -280,7 +309,8 @@ def _set_section_page_number_type(section, fmt: str, start: int) -> None:
 
     pg_num_type = OxmlElement("w:pgNumType")
     pg_num_type.set(qn("w:fmt"), fmt)
-    pg_num_type.set(qn("w:start"), str(start))
+    if start is not None:
+        pg_num_type.set(qn("w:start"), str(start))
 
     # Cari elemen anak pertama yang seharusnya berada SETELAH pgNumType
     # (mis. w:cols, w:titlePg, w:docGrid), lalu sisipkan pgNumType tepat
