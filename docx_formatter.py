@@ -110,6 +110,15 @@ def _normalize_document_text(document: Document, config: dict) -> None:
         if alignment and not in_front_matter:
             paragraph.alignment = alignment_map.get(alignment.lower(), paragraph.alignment)
 
+        # Samakan jarak antar-paragraf isi naskah (BUKAN heading, supaya
+        # space_before/after 18pt/12pt yang sengaja dipasang untuk judul bab
+        # di mailmerge.py tidak ketimpa jadi 0). Tanpa ini, paragraf yang
+        # datang dari naskah sumber dengan gaya beda-beda bisa punya jarak
+        # antar-paragraf tidak konsisten walau line_spacing-nya sudah sama.
+        if not in_front_matter and not is_heading:
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(0)
+
         for run in paragraph.runs:
             if font_name:
                 run.font.name = font_name
@@ -251,12 +260,12 @@ def _inject_dynamic_page_numbering(document: Document) -> None:
 
     if len(sections) == 1:
         _set_section_page_number_type(sections[0], fmt="decimal", start=1)
-        _set_footer_page_number(sections[0].footer)
+        _set_all_footer_variants_page_number(sections[0])
         return
 
     # Section pertama: halaman depan, angka romawi kecil.
     _set_section_page_number_type(sections[0], fmt="lowerRoman", start=1)
-    _set_footer_page_number(sections[0].footer)
+    _set_all_footer_variants_page_number(sections[0])
 
     # Section kedua dst.: angka arab. Restart ke 1 cuma di section kedua
     # (awal isi naskah); section berikutnya melanjutkan penomoran otomatis
@@ -264,7 +273,7 @@ def _inject_dynamic_page_numbering(document: Document) -> None:
     for idx in range(1, len(sections)):
         start = 1 if idx == 1 else None
         _set_section_page_number_type(sections[idx], fmt="decimal", start=start)
-        _set_footer_page_number(sections[idx].footer)
+        _set_all_footer_variants_page_number(sections[idx])
 
 
 def _count_section_nodes(document: Document) -> int:
@@ -338,6 +347,39 @@ def qn_localname(tag: str) -> str:
         return tag
     local = tag.split("}", 1)[1]
     return f"w:{local}"
+
+
+def _set_all_footer_variants_page_number(section) -> None:
+    """Tulis field PAGE dinamis ke SEMUA varian footer section ini.
+
+    Template buku biasanya mengaktifkan "different odd & even pages" (margin
+    cermin, posisi nomor halaman gantian kiri/kanan). Kalau begitu, halaman
+    genap dirender pakai `even_page_footer`, BUKAN `footer` biasa. Sebelumnya
+    kode ini cuma menulis ke `section.footer`, jadi `even_page_footer` (dan
+    `first_page_footer` kalau ada halaman-judul-per-bab) tetap berisi konten
+    statis bawaan template -> nomor halaman di halaman genap tidak pernah
+    berubah / sama terus / dobel dengan halaman lain. Sekarang ketiga varian
+    ditulis field PAGE yang sama supaya penomoran selalu ikut halaman
+    fisiknya, bukan konten statis lama.
+    """
+    _set_footer_page_number(section.footer)
+    section.footer.is_linked_to_previous = False
+
+    # even_page_footer & first_page_footer HANYA relevan kalau memang dipakai
+    # (Word butuh flag ini di document.settings). Aksesnya lewat python-docx
+    # aman dipanggil kapan pun; kalau tidak dipakai Word akan mengabaikannya,
+    # jadi lebih aman selalu menyamakan isinya drpd meninggalkan versi lama.
+    for variant in (
+        getattr(section, "even_page_footer", None),
+        getattr(section, "first_page_footer", None),
+    ):
+        if variant is None:
+            continue
+        try:
+            variant.is_linked_to_previous = False
+        except Exception:
+            pass
+        _set_footer_page_number(variant)
 
 
 def _set_footer_page_number(footer) -> None:

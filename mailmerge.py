@@ -10,7 +10,7 @@ from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, RGBColor
 from docx.text.paragraph import Paragraph
 
 from docx_formatter import normalize_docx_layout
@@ -364,6 +364,10 @@ def _insert_manuscript_sections(
                 run.font.size = Pt(heading_font_size)
                 if is_sub_heading or is_bab:
                     run.font.bold = True
+                    # Style "Heading 1"/"Heading 2" bawaan Word defaultnya
+                    # pakai warna tema (biru accent). Dipaksa hitam supaya
+                    # judul bab konsisten dengan warna teks isi naskah.
+                    run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
 
         for line in body_lines:
             if is_image_marker(line) and line in images:
@@ -390,10 +394,18 @@ def _insert_manuscript_sections(
 
             p_new.text = clean_line
 
-            # Paragraf Isi Naskah biasa (Format Dinamis)
+            # Paragraf Isi Naskah biasa (Format Dinamis).
+            # space_before/space_after DIPAKSA 0: kalau tidak, paragraf baru
+            # ikut jarak bawaan style "Normal" (biasanya ada space_after
+            # beberapa pt), yang bikin jarak antar-paragraf jadi tidak rata
+            # dibanding rapatnya baris dalam satu paragraf (line_spacing).
+            # Book layout memisahkan paragraf lewat first_line_indent, bukan
+            # jarak vertikal ekstra.
             p_new.alignment = WD_PARAGRAPH_ALIGNMENT.JUSTIFY
             p_new.paragraph_format.first_line_indent = Cm(0.75)
             p_new.paragraph_format.line_spacing = line_spacing
+            p_new.paragraph_format.space_before = Pt(0)
+            p_new.paragraph_format.space_after = Pt(0)
 
             for run in p_new.runs:
                 run.font.name = font_name
