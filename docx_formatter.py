@@ -5,6 +5,7 @@ from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.section import _Header
 from docx.shared import Cm, Pt
 
 
@@ -166,6 +167,32 @@ def _is_field_paragraph(paragraph) -> bool:
     return "w:instrText" in xml or "w:fldChar" in xml
 
 
+def _is_section_break_paragraph(paragraph) -> bool:
+    """Return True kalau paragraf ini membawa section break (w:pPr/w:sectPr).
+
+    Paragraf semacam ini SELALU kosong teksnya (dibuat lewat
+    `document.add_paragraph()` polos di mailmerge.py, lalu w:sectPr
+    ditempel ke w:pPr-nya sebagai penanda "section berikutnya mulai di
+    halaman ganjil baru" -- lihat `_make_odd_page_sectpr` di mailmerge.py).
+    Karena teksnya kosong, tanpa pengecekan ini paragraf tsb kehitung baris
+    kosong biasa oleh `_clean_empty_paragraphs` dan BISA IKUT TERHAPUS kalau
+    kebetulan bersebelahan dengan baris kosong lain -- begitu paragraf
+    penandanya hilang, section break-nya ikut hilang, dua section (mis.
+    halaman depan & Bab 1, atau Bab N & Bab N+1) melebur balik jadi satu
+    section. Akibatnya header/nomor halaman yang seharusnya beda per section
+    (header dikosongkan di halaman depan, nomor halaman romawi vs arab,
+    restart penomoran per bab) jadi salah/tidak konsisten, tergantung berapa
+    section yang keburu melebur.
+    """
+    try:
+        p_pr = paragraph._p.find(qn("w:pPr"))
+    except Exception:
+        return False
+    if p_pr is None:
+        return False
+    return p_pr.find(qn("w:sectPr")) is not None
+
+
 def _contains_image(paragraph) -> bool:
     """Return True if the paragraph has an inline/floating image (drawing) or a VML picture."""
     p_xml = paragraph._p
@@ -199,6 +226,9 @@ def _clean_empty_paragraphs(document: Document) -> None:
         if _contains_image(paragraph):
             previous_was_blank = False
             continue
+        if _is_section_break_paragraph(paragraph):
+            previous_was_blank = False
+            continue
 
         is_blank = not paragraph.text or not paragraph.text.strip()
         if is_blank and previous_was_blank:
@@ -228,12 +258,46 @@ def _force_independent_definition(hdr_or_ftr) -> None:
     section ikut mengubah teks section lain yang berbagi part yang sama --
     termasuk halaman depan, yang jadi ikut kebawa teks header bab.
 
-    Solusinya: paksa lepas dulu (True, balik ke "linked"/warisan), baru
-    pasang ulang (False) -- baru di titik INI python-docx benar-benar
-    membuatkan part baru yang independen.
+    PENTING -- kenapa TIDAK pakai trik toggle `is_linked_to_previous = True`
+    lalu `= False`: assignment `True` memanggil `_drop_definition()`, yang
+    membuang PART lama LEWAT `document_part.drop_header_part(rId)` --
+    tindakan ini MEMBEBASKAN nomor rId itu supaya python-docx boleh
+    memakainya lagi utnuk part berikutnya yang dibuat. Karena section-section
+    bab di dokumen ini mewarisi rId yang SAMA PERSIS satu sama lain (hasil
+    deep-copy sectPr template di mailmerge.py), begitu section pertama yang
+    diproses "melepas" rId bersama itu, section BERIKUTNYA yang belum
+    sempat diproses (referensinya di XML masih memuat rId lama yang sama)
+    bisa "ketiban" tersambung ke part BARU yang baru saja dibuat kalau
+    kebetulan part baru itu dapat alokasi nomor rId yang sama persis (rId
+    yang baru saja dibebaskan). Akibatnya section pertama & section
+    berikutnya berakhir menunjuk ke part yang SAMA lagi -- persis masalah
+    yang ingin dihindari fungsi ini -- dan teks header/footer salah satu
+    section bisa "bocor" ke section lain (mis. header judul bab ikut
+    muncul di halaman depan yang seharusnya kosong).
+
+    Solusi yang aman: lepas HANYA elemen referensinya (`w:headerReference`
+    / `w:footerReference`) dari sectPr section ini -- TANPA membuang part
+    lamanya dari relationship dokumen, supaya rId lama itu tidak pernah
+    dibebaskan/dipakai ulang. Part lama boleh jadi masih dipakai/dirujuk
+    oleh section lain yang belum diproses; itu aman dibiarkan sampai
+    section itu diproses sendiri dan dapat definisi barunya sendiri. Baru
+    setelah itu panggil `_add_definition()` langsung untuk membuat part
+    baru + rId baru yang dijamin belum pernah dipakai (bukan hasil daur
+    ulang), lalu pasang referensi barunya.
     """
-    hdr_or_ftr.is_linked_to_previous = True
-    hdr_or_ftr.is_linked_to_previous = False
+    sect_pr = hdr_or_ftr._sectPr
+    is_header = isinstance(hdr_or_ftr, _Header)
+    hdr_ftr_type = hdr_or_ftr._hdrftr_index
+
+    existing_reference = (
+        sect_pr.get_headerReference(hdr_ftr_type)
+        if is_header
+        else sect_pr.get_footerReference(hdr_ftr_type)
+    )
+    if existing_reference is not None:
+        sect_pr.remove(existing_reference)
+
+    hdr_or_ftr._add_definition()
 
 
 def _insert_custom_header(document: Document, config: dict) -> None:
