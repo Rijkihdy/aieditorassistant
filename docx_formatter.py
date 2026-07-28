@@ -211,30 +211,91 @@ def _clean_empty_paragraphs(document: Document) -> None:
         previous_was_blank = is_blank
 
 
+def _force_independent_definition(hdr_or_ftr) -> None:
+    """Paksa header/footer ini punya definisi (part) yang BENAR-BENAR sendiri,
+    bukan sekadar 'tidak linked' menurut python-docx.
+
+    Ditemukan lewat pengetesan pakai template asli: section satu-satunya di
+    template SUDAH punya elemen w:headerReference eksplisit sejak awal.
+    Artinya `is_linked_to_previous` sudah False SEBELUM kita apa-apakan.
+    Setiap section bab baru (hasil deep-copy sectPr template itu di
+    mailmerge.py) ikut mewarisi headerReference yang SAMA (rId sama persis)
+    -> python-docx menganggap semuanya "tidak linked" (masing-masing punya
+    elemen reference sendiri), padahal secara fisik mereka semua menunjuk ke
+    PART/isi yang SAMA PERSIS di dalam file. Assignment
+    `is_linked_to_previous = False` jadi NO-OP (python-docx cuma bikin
+    definisi baru kalau state-nya BERUBAH), sehingga menulis teks ke satu
+    section ikut mengubah teks section lain yang berbagi part yang sama --
+    termasuk halaman depan, yang jadi ikut kebawa teks header bab.
+
+    Solusinya: paksa lepas dulu (True, balik ke "linked"/warisan), baru
+    pasang ulang (False) -- baru di titik INI python-docx benar-benar
+    membuatkan part baru yang independen.
+    """
+    hdr_or_ftr.is_linked_to_previous = True
+    hdr_or_ftr.is_linked_to_previous = False
+
+
 def _insert_custom_header(document: Document, config: dict) -> None:
-    """Insert a custom header into the first section only."""
+    """Pasang header custom HANYA di halaman isi bab (bukan halaman depan).
+
+    Section pertama (index 0) = halaman-halaman SEBELUM Bab 1: cover,
+    identitas buku, kata pengantar, daftar isi, sinopsis. Halaman-halaman
+    ini SENGAJA dibuat TANPA header judul.
+
+    Sebelumnya header custom cuma di-set eksplisit di section[0], dan
+    section-section lain (isi bab) tidak pernah diputus link header-nya
+    (`is_linked_to_previous` tetap True/default) -- akibatnya, karena
+    python-docx (dan Word) membuat section tanpa definisi header sendiri
+    otomatis MEWARISI header dari section sebelumnya, SEMUA section isi bab
+    ikut menampilkan header judul yang sama seperti front matter. Sekarang
+    dibalik: front matter dikosongkan (definisi sendiri, tapi teks kosong),
+    dan tiap section isi bab (index 1 dst.) diberi definisi header sendiri
+    (unlinked) berisi teks judul.
+    """
     header_text = config.get("header_text")
+    header_font_name = config.get("header_font_name")
+    header_font_size_pt = config.get("header_font_size_pt")
+
+    sections = document.sections
+    if not sections:
+        return
+
+    def _blank(hdr) -> None:
+        _force_independent_definition(hdr)
+        para = hdr.paragraphs[0] if hdr.paragraphs else hdr.add_paragraph()
+        para.clear()
+        for extra in hdr.paragraphs[1:]:
+            extra_el = extra._element
+            parent = extra_el.getparent()
+            if parent is not None:
+                parent.remove(extra_el)
+
+    def _fill(hdr) -> None:
+        _force_independent_definition(hdr)
+        para = hdr.paragraphs[0] if hdr.paragraphs else hdr.add_paragraph()
+        para.text = header_text
+        para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        run = para.runs[0] if para.runs else para.add_run(header_text)
+        if header_font_name:
+            run.font.name = header_font_name
+        if header_font_size_pt is not None:
+            run.font.size = Pt(header_font_size_pt)
+
+    # Section pertama: front matter, SEMUA varian header (biasa, halaman
+    # genap, halaman pertama -- template ini pakai "different odd & even
+    # pages") dikosongkan total.
+    for variant in (sections[0].header, sections[0].even_page_header, sections[0].first_page_header):
+        _blank(variant)
+
     if not header_text:
         return
 
-    first_section = document.sections[0]
-    header = first_section.header
-    header.is_linked_to_previous = False
-    header_para = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
-    header_para.text = header_text
-    header_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-
-    header_font_name = config.get("header_font_name")
-    header_font_size_pt = config.get("header_font_size_pt")
-    if header_para.runs:
-        run = header_para.runs[0]
-    else:
-        run = header_para.add_run(header_text)
-
-    if header_font_name:
-        run.font.name = header_font_name
-    if header_font_size_pt is not None:
-        run.font.size = Pt(header_font_size_pt)
+    # Section isi bab (index 1 dst.): SEMUA varian header diisi teks judul
+    # yang sama, supaya konsisten di halaman ganjil maupun genap.
+    for section in sections[1:]:
+        for variant in (section.header, section.even_page_header, section.first_page_header):
+            _fill(variant)
 
 
 def _inject_dynamic_page_numbering(document: Document) -> None:
@@ -336,7 +397,7 @@ def _set_section_page_number_type(section, fmt: str, start: int | None) -> None:
         sect_pr.append(pg_num_type)
 
     try:
-        section.footer.is_linked_to_previous = False
+        _force_independent_definition(section.footer)
     except Exception:
         pass
 
@@ -362,8 +423,8 @@ def _set_all_footer_variants_page_number(section) -> None:
     ditulis field PAGE yang sama supaya penomoran selalu ikut halaman
     fisiknya, bukan konten statis lama.
     """
+    _force_independent_definition(section.footer)
     _set_footer_page_number(section.footer)
-    section.footer.is_linked_to_previous = False
 
     # even_page_footer & first_page_footer HANYA relevan kalau memang dipakai
     # (Word butuh flag ini di document.settings). Aksesnya lewat python-docx
@@ -376,15 +437,31 @@ def _set_all_footer_variants_page_number(section) -> None:
         if variant is None:
             continue
         try:
-            variant.is_linked_to_previous = False
+            _force_independent_definition(variant)
         except Exception:
             pass
         _set_footer_page_number(variant)
 
 
 def _set_footer_page_number(footer) -> None:
-    """Insert a centered PAGE field into the footer using OXML."""
+    """Insert a centered PAGE field into the footer using OXML.
+
+    SEMUA isi lama footer ini (paragraf lain, ATAU tabel -- banyak template
+    buku memakai tabel 3 kolom kiri/tengah/kanan di footer demi perataan,
+    dengan nomor halaman statis duduk di salah satu selnya) dihapus total,
+    disisakan SATU paragraf kosong untuk ditulisi field PAGE. Pembersihan
+    sebelumnya cuma menyisir `footer.paragraphs`, yang TIDAK menjangkau
+    paragraf di dalam tabel -- makanya nomor halaman statis di dalam tabel
+    footer selamat dan tetap tampil dobel bareng field yang baru.
+    """
+    footer_root = footer._element
     footer_paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    kept_element = footer_paragraph._p
+
+    for child in list(footer_root):
+        if child is not kept_element:
+            footer_root.remove(child)
+
     footer_paragraph.clear()
     footer_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
 

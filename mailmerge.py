@@ -96,6 +96,7 @@ def generate_book_docx(
     final_kata_pengantar = kata_pengantar_text or auto_kata_pengantar
     if final_kata_pengantar:
         _replace_kata_pengantar(document, final_kata_pengantar)
+    _style_front_matter_heading(document, "KATA PENGANTAR")
 
     # 5. Masukkan Isi Naskah Multi-Bab (Daftar Isi bawaan naskah sudah dibuang),
     #    tiap bab baru dimulai di halaman ganjil baru (section break oddPage),
@@ -205,6 +206,9 @@ def _insert_sinopsis(document: Document, sinopsis_text: str) -> None:
         heading_p.style = document.styles["Heading 1"]
     except KeyError:
         pass
+    for run in heading_p.runs:
+        run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        run.font.bold = True
     heading_p.paragraph_format.page_break_before = True
 
     insert_after = heading_p._p
@@ -230,6 +234,31 @@ def _normalize_spacing(text: str) -> str:
     """
     text = re.sub(r"\t+\d+\s*$", "", text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+def _style_front_matter_heading(document: Document, label: str, level: str = "Heading 1") -> None:
+    """Paksa paragraf placeholder front-matter (mis. 'KATA PENGANTAR') jadi
+    Heading Word beneran + warna hitam.
+
+    Placeholder seperti ini biasanya cuma teks biasa/bold manual di template
+    (bukan style Heading Word asli), jadi selama ini: (1) warnanya tidak ikut
+    kena fix hitam yang dipasang utk judul bab, dan (2) tidak pernah muncul
+    di Daftar Isi otomatis karena field TOC (\\o "1-3") cuma menyaring
+    paragraf ber-style Heading 1-3, bukan berdasar teks/bold manual.
+    """
+    for paragraph in document.paragraphs:
+        if paragraph.text.strip().upper() != label.upper():
+            continue
+        try:
+            paragraph.style = document.styles[level]
+        except KeyError:
+            pass
+        if not paragraph.runs:
+            paragraph.add_run(paragraph.text)
+        for run in paragraph.runs:
+            run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+            run.font.bold = True
+        break
 
 
 def _replace_kata_pengantar(document: Document, kata_pengantar_text: str) -> None:
