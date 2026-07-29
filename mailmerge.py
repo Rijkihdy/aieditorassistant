@@ -87,9 +87,26 @@ def generate_book_docx(
     else:
         auto_kata_pengantar, sections = "", []
 
-    # 3. Isi Sinopsis (opsional — dari input manual/upload ATAU hasil generate AI di app.py)
-    if sinopsis_text and sinopsis_text.strip():
-        _insert_sinopsis(document, sinopsis_text)
+    # 2b. Pisahkan section "SINOPSIS" / "TENTANG PENULIS" KALAU penulis
+    #     kebetulan menulis sendiri bagian itu di dalam file naskahnya.
+    #     Tanpa ini, section semacam itu ikut disisipkan sebagai BAB BIASA
+    #     di tengah buku (sesuai urutan aslinya di naskah) lewat
+    #     `_insert_manuscript_sections` -- makanya kata "SINOPSIS"/"TENTANG
+    #     PENULIS" bisa muncul sebagai judul bab di tengah, dan isinya tidak
+    #     pernah mengisi slot Sinopsis/Tentang-Penulis resmi di
+    #     awal/akhir buku. Isinya dipakai sebagai FALLBACK kalau form
+    #     sinopsis_text/tentang_penulis_text kosong; kalau form sudah diisi
+    #     manual, section hasil ekstraksi ini cukup dibuang (dianggap
+    #     duplikat) supaya tidak dobel.
+    auto_sinopsis, auto_tentang_penulis, sections = _extract_named_sections(
+        sections, ("SINOPSIS", "TENTANG PENULIS")
+    )
+
+    # 3. Isi Sinopsis (opsional — dari input manual/upload, hasil generate AI
+    #    di app.py, ATAU section "SINOPSIS" yang otomatis terdeteksi di naskah asli).
+    final_sinopsis = sinopsis_text if sinopsis_text and sinopsis_text.strip() else auto_sinopsis
+    if final_sinopsis and final_sinopsis.strip():
+        _insert_sinopsis(document, final_sinopsis)
 
     # 4. Isi Kata Pengantar — pakai input manual dari form kalau diisi,
     #    kalau kosong pakai yang otomatis terdeteksi dari naskah asli.
@@ -98,14 +115,25 @@ def generate_book_docx(
         _replace_kata_pengantar(document, final_kata_pengantar)
     _style_front_matter_heading(document, "KATA PENGANTAR")
 
-    # 5. Masukkan Isi Naskah Multi-Bab (Daftar Isi bawaan naskah sudah dibuang),
-    #    tiap bab baru dimulai di halaman ganjil baru (section break oddPage),
-    #    dan gambar dari naskah asli (kalau ada) disisipkan lagi di posisi yang sama.
+    # 5. Masukkan Isi Naskah Multi-Bab (Daftar Isi bawaan naskah sudah dibuang,
+    #    begitu juga section SINOPSIS/TENTANG PENULIS bawaan naskah -- lihat
+    #    langkah 2b di atas), tiap bab baru dimulai di halaman ganjil baru
+    #    (section break oddPage), dan gambar dari naskah asli (kalau ada)
+    #    disisipkan lagi di posisi yang sama.
     _insert_manuscript_sections(document, sections, format_config=format_config, images=images)
 
-    # 6. Isi "Tentang Penulis" (opsional, diinput lewat form)
-    if tentang_penulis_text and tentang_penulis_text.strip():
-        _replace_tentang_penulis(document, tentang_penulis_text)
+    # 6. Isi "Tentang Penulis" (dari form, ATAU fallback dari section "TENTANG
+    #    PENULIS" yang otomatis terdeteksi di naskah asli).
+    final_tentang_penulis = (
+        tentang_penulis_text if tentang_penulis_text and tentang_penulis_text.strip() else auto_tentang_penulis
+    )
+    if final_tentang_penulis and final_tentang_penulis.strip():
+        _replace_tentang_penulis(document, final_tentang_penulis)
+    # Jadikan heading "TENTANG PENULIS" style Heading asli (sama seperti
+    # "KATA PENGANTAR" di atas) supaya (a) warnanya konsisten hitam-bold, dan
+    # (b) MASUK ke Daftar Isi otomatis -- field TOC (\o "1-3") cuma menyaring
+    # paragraf ber-style Heading 1-3 asli, bukan style custom bawaan template.
+    _style_front_matter_heading(document, "TENTANG PENULIS")
 
     # 7. Daftar Isi otomatis: taruh TEPAT SETELAH Kata Pengantar (di posisi
     #    heading "DAFTAR ISI" bawaan template), menggantikan daftar isi
@@ -180,6 +208,97 @@ def _insert_qrcbn(document: Document, qrcbn: str) -> None:
                         new_run.font.size = run.font.size
                     break
             return
+
+
+def _extract_named_sections(
+    sections: list[tuple[str, list[str]]],
+    names: tuple[str, ...],
+) -> tuple[str, str, list[tuple[str, list[str]]]]:
+    """Pisahkan bagian "SINOPSIS" / "TENTANG PENULIS" tulisan penulis sendiri
+    dari daftar section isi naskah biasa hasil naskah_parser, DALAM DUA BENTUK:
+
+    (1) SECTION TERSENDIRI -- naskah_parser sempat mendeteksinya sebagai
+        section/heading sendiri (judul section == persis salah satu nama di
+        `names`). Ini terjadi kalau baris itu memang dikenali sebagai heading
+        oleh naskah_parser.
+
+    (2) BARIS BIASA DI TENGAH BODY TEXT suatu bab -- ternyata BENTUK YANG
+        LEBIH SERING TERJADI: penulis menulis kata "TENTANG PENULIS" /
+        "SINOPSIS" sebagai paragraf polos di file .docx sumber (bukan pakai
+        style Heading Word), sehingga naskah_parser (yang mendeteksi heading
+        berdasarkan STYLE, bukan isi teks) TIDAK PERNAH menganggapnya sebagai
+        section/judul sendiri -- baris itu ikut lolos sebagai body_lines
+        biasa milik bab manapun yang kebetulan sedang berjalan saat baris itu
+        muncul di naskah. Kasus (1) saja TIDAK CUKUP menangkap ini karena
+        baris tsb tidak pernah jadi "judul section" untuk mulai dengan --
+        makanya perlu di-scan juga di DALAM body_lines tiap section.
+
+    Dalam bentuk (2), begitu baris penanda ("SINOPSIS" / "TENTANG PENULIS")
+    ditemukan di tengah body_lines, SEMUA baris sesudahnya (lintas section,
+    sampai ada penanda lain atau naskah habis) dianggap MILIK penanda
+    tersebut -- karena di praktiknya bagian ini biasa ditulis penulis di
+    paling akhir naskah tanpa heading baru lagi sesudahnya utk menutupnya.
+
+    Hanya baris yang PERSIS cocok (case-insensitive, sesudah di-strip) yang
+    dianggap penanda, supaya tidak salah menangkap kalimat isi bab yang
+    kebetulan memuat kata "sinopsis"/"tentang penulis" di tengah kalimat.
+
+    Return: (gabungan_baris_sinopsis, gabungan_baris_tentang_penulis, sisa_sections)
+    """
+    normalized_targets = {name.strip().upper() for name in names}
+    collected: dict[str, list[str]] = {name: [] for name in normalized_targets}
+    remaining: list[tuple[str, list[str]]] = []
+
+    # Penanda BUKAN-target yang menandai "akhir" penampungan penanda aktif --
+    # kalau tidak ada ini, begitu satu penanda aktif (mis. SINOPSIS) ketemu,
+    # SEMUA baris sesudahnya (termasuk bagian lain milik naskah yg sah, mis.
+    # DAFTAR PUSTAKA/bibliografi) ikut tersedot masuk jadi "isi sinopsis" --
+    # padahal daftar pustaka itu bagian isi buku yang sah dan harus tetap
+    # muncul sebagai body biasa, bukan ikut hilang ditelan bucket sinopsis.
+    stop_markers = {
+        "DAFTAR PUSTAKA", "DAFTAR REFERENSI", "REFERENSI", "BIBLIOGRAFI", "DAFTAR RUJUKAN",
+    }
+
+    # Penanda yang sedang "aktif" -- begitu ketemu baris penanda di tengah
+    # body_lines, baris-baris SESUDAHNYA (termasuk lintas section berikutnya)
+    # ditampung ke situ, sampai ketemu penanda lain (target ATAU stop_markers)
+    # atau naskah habis.
+    active_marker: str | None = None
+
+    for title, body_lines in sections:
+        title_key = (title or "").strip().upper()
+
+        if title_key in normalized_targets:
+            # Kasus (1): section ini sendiri memang persis SINOPSIS/TENTANG
+            # PENULIS -- seluruh isinya milik penanda itu, judul section
+            # tidak perlu diproses lagi sebagai body biasa.
+            collected[title_key].extend(body_lines)
+            active_marker = None
+            continue
+
+        new_body_lines: list[str] = []
+        for line in body_lines:
+            line_key = line.strip().upper()
+            if line_key in normalized_targets:
+                # Kasus (2): baris penanda ketemu DI TENGAH body_lines.
+                active_marker = line_key
+                continue
+            if line_key in stop_markers:
+                # Balik ke mode isi bab biasa -- baris ini & sesudahnya tetap
+                # bagian sah dari naskah, JANGAN ikut tertelan bucket penanda.
+                active_marker = None
+                new_body_lines.append(line)
+                continue
+            if active_marker is not None:
+                collected[active_marker].append(line)
+            else:
+                new_body_lines.append(line)
+
+        remaining.append((title, new_body_lines))
+
+    auto_sinopsis = "\n".join(collected.get("SINOPSIS", [])).strip()
+    auto_tentang_penulis = "\n".join(collected.get("TENTANG PENULIS", [])).strip()
+    return auto_sinopsis, auto_tentang_penulis, remaining
 
 
 def _insert_sinopsis(document: Document, sinopsis_text: str) -> None:
@@ -321,7 +440,29 @@ def _insert_manuscript_sections(
             break
 
     if target_p is None:
-        target_p = document.add_paragraph()
+        # Placeholder "Judul Bab"/"(Isi naskah)" tidak ada di template ini.
+        # DULU: fallback-nya `document.add_paragraph()`, yang nambah paragraf
+        # baru di paling UJUNG DOKUMEN -- kalau template sudah punya heading
+        # "TENTANG PENULIS" di dekat akhir (lazim di template Guepedia), isi
+        # naskah/bab jadi ke-insert SETELAH "Tentang Penulis", membalik
+        # urutan yang seharusnya (Tentang Penulis harus di paling akhir,
+        # setelah bab terakhir, bukan sebelum bab pertama).
+        # SEKARANG: kalau placeholder tidak ketemu, coba dulu sisip TEPAT
+        # SEBELUM heading "TENTANG PENULIS" (kalau ada) supaya urutan buku
+        # tetap benar walau template lupa taruh placeholder-nya. Baru kalau
+        # itu juga tidak ada, fallback paling akhir ke ujung dokumen seperti
+        # sebelumnya (drpd gagal total).
+        tentang_penulis_heading = None
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip().upper() == "TENTANG PENULIS":
+                tentang_penulis_heading = paragraph
+                break
+
+        if tentang_penulis_heading is not None:
+            target_p = document.add_paragraph()
+            tentang_penulis_heading._p.addprevious(target_p._p)
+        else:
+            target_p = document.add_paragraph()
 
     if not sections:
         p_element = target_p._element
