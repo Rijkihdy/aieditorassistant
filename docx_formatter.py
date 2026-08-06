@@ -109,7 +109,27 @@ def _normalize_document_text(document: Document, config: dict) -> None:
             paragraph.paragraph_format.line_spacing = line_spacing
 
         if alignment and not in_front_matter:
-            paragraph.alignment = alignment_map.get(alignment.lower(), paragraph.alignment)
+            # PENTING: jangan pakai `alignment_map.get(x, paragraph.alignment)`.
+            # Argumen default punya `dict.get()` dievaluasi EAGER oleh Python
+            # (dihitung duluan sebelum .get() dipanggil), jadi `paragraph.alignment`
+            # tetap DIBACA untuk SETIAP paragraf walau hasilnya kepakai atau
+            # tidak. Masalahnya, paragraf yang berasal dari naskah yang
+            # dulunya diketik/di-convert dari Google Docs sering punya XML
+            # alignment "start"/"end" (istilah CSS, bukan "left"/"right") --
+            # dan `WD_PARAGRAPH_ALIGNMENT` di python-docx TIDAK PUNYA mapping
+            # buat nilai itu, jadi SEKADAR MEMBACA `.alignment`-nya langsung
+            # error ("WD_PARAGRAPH_ALIGNMENT has no XML mapping for 'start'")
+            # dan menggagalkan seluruh proses format dokumen.
+            #
+            # Solusinya: cuma TULIS alignment kalau memang ada mapping yang
+            # valid untuk config-nya. Kalau tidak ada (harusnya tidak pernah
+            # terjadi karena config selalu salah satu dari 4 pilihan di atas),
+            # biarkan alignment paragraf itu apa adanya -- jangan disentuh
+            # sama sekali, supaya tidak perlu membaca nilai lama yang bisa
+            # jadi "asing" dan bikin error.
+            mapped_alignment = alignment_map.get(alignment.lower())
+            if mapped_alignment is not None:
+                paragraph.alignment = mapped_alignment
 
         # Samakan jarak antar-paragraf isi naskah (BUKAN heading, supaya
         # space_before/after 18pt/12pt yang sengaja dipasang untuk judul bab

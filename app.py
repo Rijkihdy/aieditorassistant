@@ -64,6 +64,17 @@ from mailmerge import MailMergeError, generate_book_docx
 from naskah_parser import parse_naskah
 from utils import count_words, extract_text, guess_title
 
+# Parser struktur naskah berbasis AI (Groq) -- lihat docstring lengkap di
+# ai_naskah_parser.py. Diimpor "lunak": kalau package `groq` belum
+# terinstall, app tetap jalan normal pakai parser regex/style biasa
+# (naskah_parser.parse_naskah) sebagai fallback di build_editor_sections().
+try:
+    from ai_naskah_parser import parse_naskah_with_ai
+
+    _AI_PARSER_AVAILABLE = True
+except ImportError:
+    _AI_PARSER_AVAILABLE = False
+
 DEFAULT_TEMPLATE_PATH = Path(__file__).parent / "templates" / "template_buku.docx"
 
 load_dotenv()
@@ -736,7 +747,46 @@ def build_editor_sections(raw_text: str, fallback_title: str | None = None) -> l
     if not raw_text or not raw_text.strip():
         return []
 
-    kata_pengantar, sections = parse_naskah(raw_text, fallback_title=fallback_title or "")
+    kata_pengantar = ""
+    sinopsis = ""
+    tentang_penulis = ""
+    sections: list[tuple[str, list[str]]] = []
+    ai_result = None
+
+    # AI (Groq) SEKARANG JADI JALUR UTAMA buat baca struktur naskah begitu
+    # diunggah -- bukan cuma buat memecah bab, tapi SEKALIAN mendeteksi nama
+    # penulis, judul buku, sinopsis, kata pengantar, dan tentang/profil
+    # penulis langsung dari naskahnya sendiri (lihat docstring
+    # ai_naskah_parser.py). Kalau AI tidak tersedia (package belum
+    # terinstall, API key belum diisi) atau gagal, otomatis jatuh ke parser
+    # regex/style biasa (naskah_parser.parse_naskah) supaya app tetap jalan.
+    if _AI_PARSER_AVAILABLE and os.getenv("GROQ_API_KEY"):
+        raw_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        with st.spinner("Membaca struktur naskah dengan AI…"):
+            try:
+                ai_result = parse_naskah_with_ai(raw_lines)
+            except Exception:
+                ai_result = None
+
+    if ai_result and ai_result.get("ok"):
+        kata_pengantar = ai_result["kata_pengantar"]
+        sinopsis = ai_result["sinopsis"]
+        tentang_penulis = ai_result["tentang_penulis"]
+        sections = ai_result["sections"]
+
+        # Prefill form -- HANYA kalau field-nya masih kosong, supaya tidak
+        # menimpa apa yang sudah diketik/diedit manual oleh user.
+        if ai_result["nama_penulis"] and not st.session_state.get("mm_nama_penulis"):
+            st.session_state["mm_nama_penulis"] = ai_result["nama_penulis"]
+        if ai_result["judul_buku"] and not st.session_state.get("mm_judul_naskah"):
+            st.session_state["mm_judul_naskah"] = ai_result["judul_buku"]
+        if sinopsis and not st.session_state.get("sinopsis_manual_text"):
+            st.session_state["sinopsis_manual_text"] = sinopsis
+        if tentang_penulis and not st.session_state.get("mm_tentang_penulis"):
+            st.session_state["mm_tentang_penulis"] = tentang_penulis
+    else:
+        # Fallback: AI tidak tersedia/gagal -- pakai parser regex/style biasa.
+        kata_pengantar, sections = parse_naskah(raw_text, fallback_title=fallback_title or "")
 
     if kata_pengantar and not st.session_state.get("mm_kata_pengantar"):
         st.session_state["mm_kata_pengantar"] = kata_pengantar

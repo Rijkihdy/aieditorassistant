@@ -22,6 +22,18 @@ from naskah_parser import (
     strip_front_matter,
 )
 
+# Deteksi struktur berbasis AI (Groq) -- SEKARANG JALUR UTAMA (lihat
+# docstring di ai_naskah_parser.py). Diimpor secara "lunak": kalau package
+# `groq` belum terinstall atau modulnya belum ada, mailmerge.py TETAP JALAN
+# NORMAL pakai parser regex/style biasa sebagai fallback (lihat
+# `generate_book_docx`, parameter `use_ai_fallback`).
+try:
+    from ai_naskah_parser import build_sections_from_structure, detect_structure_with_ai
+
+    _AI_PARSER_AVAILABLE = True
+except ImportError:
+    _AI_PARSER_AVAILABLE = False
+
 CHAPTER_TITLE_PLACEHOLDER = "Judul Bab"
 CHAPTER_BODY_PLACEHOLDER = "(Isi naskah)"
 
@@ -49,11 +61,113 @@ def generate_book_docx(
     qrcbn: str = "",
     sinopsis_text: str = "",
     tentang_penulis_text: str = "",
+    use_ai_fallback: bool = True,
+    groq_api_key: str | None = None,
 ) -> None:
     """Isi template buku dengan data dinamis, lalu terapkan format dokumen dinamis ke output akhir."""
     document = Document(template_path)
 
-    # 1. Replacement Halaman Depan & Redaksi
+    # 1. Siapkan baris & gambar naskah, LALU tentukan strukturnya (bab,
+    #    kata pengantar, sinopsis, tentang penulis) -- dilakukan DI AWAL
+    #    (sebelum isi halaman depan) supaya kalau AI berhasil mendeteksi
+    #    nama_penulis/judul_buku langsung dari naskah, nilai itu SEMPAT
+    #    dipakai untuk mengisi halaman depan juga (bukan cuma dokumen
+    #    isinya), tanpa perlu penulis mengisi ulang manual di form.
+    #
+    #    AI (Groq) SEKARANG JADI JALUR UTAMA (bukan cuma cadangan) selama
+    #    tersedia (package `groq` terpasang + API key valid) -- parser
+    #    regex/style (naskah_parser.py) cuma dipakai sebagai fallback kalau
+    #    AI gagal/tidak tersedia, supaya proses tidak pernah gagal total
+    #    hanya karena AI bermasalah. Alasan AI dijadikan utama: parser
+    #    regex/style cuma bisa mengenali judul bab lewat pola teks "Bab N"
+    #    ATAU style Word Heading -- banyak naskah nyata TIDAK cocok dengan
+    #    sinyal manapun (mis. semua paragraf polos "Normal", judul bab cuma
+    #    frasa pendek yang kebetulan sama dengan listing Daftar Isi-nya
+    #    sendiri), dan AI juga otomatis mengenali sebutan lain untuk
+    #    "Tentang Penulis" (mis. "Profil Penulis") tanpa perlu daftar
+    #    sinonim manual, sekaligus mendeteksi nama penulis & judul buku
+    #    dari naskah itu sendiri.
+    images: dict[str, bytes] = {}
+    raw_lines_for_ai: list[str] = []
+    if source_docx_bytes is not None:
+        source_doc = Document(io.BytesIO(source_docx_bytes))
+        # Ambil gambar-nya saja di sini (murah, sekali jalan) -- kata
+        # pengantar/sections dari fungsi ini TIDAK dipakai kalau AI berhasil
+        # di bawah; baru dipakai ulang sebagai fallback kalau AI gagal.
+        _, _, images = extract_docx_structured(source_doc)
+        raw_lines_for_ai = [p.text.strip() for p in source_doc.paragraphs if p.text.strip()]
+    elif naskah_text.strip():
+        raw_lines_for_ai = [line.strip() for line in naskah_text.splitlines() if line.strip()]
+
+    auto_kata_pengantar = ""
+    sections: list[tuple[str, list[str]]] = []
+    parsed_with_ai = False
+
+    if use_ai_fallback and _AI_PARSER_AVAILABLE and raw_lines_for_ai:
+        try:
+            structure = detect_structure_with_ai(raw_lines_for_ai, api_key=groq_api_key)
+            ai_kp, ai_sinopsis, ai_tentang_penulis, ai_sections = build_sections_from_structure(
+                raw_lines_for_ai, structure
+            )
+            if ai_sections:
+                # AI berhasil & mengembalikan struktur yang masuk akal --
+                # pakai hasil AI sepenuhnya (termasuk Sinopsis/Tentang
+                # Penulis-nya -- AI sudah mengklasifikasikannya langsung
+                # berdasarkan MAKNA, bukan cuma cocokkan kata
+                # "SINOPSIS"/"TENTANG PENULIS" secara harfiah, jadi otomatis
+                # menangkap sebutan lain juga, mis. "PROFIL PENULIS").
+                auto_kata_pengantar = ai_kp
+                sections = ai_sections
+                if not sinopsis_text:
+                    sinopsis_text = ai_sinopsis
+                if not tentang_penulis_text:
+                    tentang_penulis_text = ai_tentang_penulis
+                if not nama_penulis and structure.get("nama_penulis"):
+                    nama_penulis = structure["nama_penulis"]
+                if not judul_naskah and structure.get("judul_buku"):
+                    judul_naskah = structure["judul_buku"]
+                parsed_with_ai = True
+        except Exception:
+            # AI gagal (mis. tidak ada API key, quota habis, jaringan
+            # bermasalah, respons AI bukan JSON valid) -- JANGAN sampai
+            # proses generate dokumen ikut gagal total gara-gara ini.
+            # Lanjut ke fallback parser regex/style di bawah.
+            parsed_with_ai = False
+
+    if not parsed_with_ai:
+        if source_docx_bytes is not None:
+            source_doc = Document(io.BytesIO(source_docx_bytes))
+            auto_kata_pengantar, sections, images = extract_docx_structured(source_doc)
+            if len(sections) == 1 and (chapter_title or not is_heading_line(sections[0][0])):
+                only_title, only_body = sections[0]
+                sections = [(chapter_title or only_title or "Bab 1", only_body)]
+        elif naskah_text.strip():
+            raw_lines = [line.strip() for line in naskah_text.splitlines() if line.strip()]
+            auto_kata_pengantar, body_lines = strip_front_matter(raw_lines)
+            sections = split_into_sections(body_lines, fallback_title=chapter_title)
+
+    # 1b. Pisahkan section "SINOPSIS" / "TENTANG PENULIS" KALAU penulis
+    #     kebetulan menulis sendiri bagian itu di dalam file naskahnya DAN
+    #     kita jatuh ke jalur regex/style (jalur AI di atas SUDAH
+    #     menanganinya sendiri secara semantik, jadi ini murni jaring
+    #     pengaman untuk fallback). Tanpa ini, section semacam itu ikut
+    #     disisipkan sebagai BAB BIASA di tengah buku lewat
+    #     `_insert_manuscript_sections` -- makanya kata "SINOPSIS"/"TENTANG
+    #     PENULIS" bisa muncul sebagai judul bab di tengah, dan isinya tidak
+    #     pernah mengisi slot Sinopsis/Tentang-Penulis resmi di
+    #     awal/akhir buku. Isinya dipakai sebagai FALLBACK kalau form
+    #     sinopsis_text/tentang_penulis_text kosong; kalau form sudah diisi
+    #     manual, section hasil ekstraksi ini cukup dibuang (dianggap
+    #     duplikat) supaya tidak dobel.
+    if not parsed_with_ai:
+        auto_sinopsis, auto_tentang_penulis, sections = _extract_named_sections(
+            sections, ("SINOPSIS", "TENTANG PENULIS")
+        )
+    else:
+        auto_sinopsis, auto_tentang_penulis = "", ""
+
+    # 2. Replacement Halaman Depan & Redaksi -- pakai nama_penulis/judul_naskah
+    #    yang sudah (kalau perlu) ditimpa hasil deteksi AI di atas.
     simple_replacements = {
         "Nama Penulis": nama_penulis or "Nama Penulis",
         "Judul Naskah": judul_naskah or "Judul Naskah",
@@ -67,45 +181,48 @@ def generate_book_docx(
     if qrcbn:
         _insert_qrcbn(document, qrcbn)
 
-    # 2. Siapkan baris & gambar naskah, buang front matter buatan penulis
-    #    sendiri (Kata Pengantar & listing Daftar Isi) karena dokumen final
-    #    sudah punya slotnya sendiri (placeholder Kata Pengantar + field TOC
-    #    otomatis). Kalau sumbernya file .docx asli, pakai parser yang sadar
-    #    STYLE Word (mengenali heading apapun teksnya, bukan cuma "Bab N")
-    #    dan ikut mempertahankan gambar inline di naskah.
-    images: dict[str, bytes] = {}
-    if source_docx_bytes is not None:
-        source_doc = Document(io.BytesIO(source_docx_bytes))
-        auto_kata_pengantar, sections, images = extract_docx_structured(source_doc)
-        if len(sections) == 1 and not is_heading_line(sections[0][0]):
-            only_title, only_body = sections[0]
-            sections = [(chapter_title or only_title or "Bab 1", only_body)]
-    elif naskah_text.strip():
-        raw_lines = [line.strip() for line in naskah_text.splitlines() if line.strip()]
-        auto_kata_pengantar, body_lines = strip_front_matter(raw_lines)
-        sections = split_into_sections(body_lines, fallback_title=chapter_title)
-    else:
-        auto_kata_pengantar, sections = "", []
-
-    # 3. Isi Sinopsis (opsional — dari input manual/upload ATAU hasil generate AI di app.py)
-    if sinopsis_text and sinopsis_text.strip():
-        _insert_sinopsis(document, sinopsis_text)
+    # 3. Isi Sinopsis (opsional — dari input manual/upload, hasil generate AI
+    #    di app.py, ATAU section "SINOPSIS" yang otomatis terdeteksi di naskah asli).
+    final_sinopsis = sinopsis_text if sinopsis_text and sinopsis_text.strip() else auto_sinopsis
+    if final_sinopsis and final_sinopsis.strip():
+        _insert_sinopsis(document, final_sinopsis)
 
     # 4. Isi Kata Pengantar — pakai input manual dari form kalau diisi,
     #    kalau kosong pakai yang otomatis terdeteksi dari naskah asli.
     final_kata_pengantar = kata_pengantar_text or auto_kata_pengantar
     if final_kata_pengantar:
         _replace_kata_pengantar(document, final_kata_pengantar)
-    _style_front_matter_heading(document, "KATA PENGANTAR")
+    # force_page_break=True: jaga-jaga supaya Kata Pengantar tetap mulai di
+    # halaman barunya sendiri walaupun (utk alasan apapun) Sinopsis kosong /
+    # tidak diisi -- sebelumnya page break Kata Pengantar CUMA dipaksa lewat
+    # _insert_sinopsis() (baris ~425), jadi kalau Sinopsis kosong, page break
+    # itu tidak pernah di-set sama sekali.
+    _style_front_matter_heading(document, "KATA PENGANTAR", force_page_break=True)
 
-    # 5. Masukkan Isi Naskah Multi-Bab (Daftar Isi bawaan naskah sudah dibuang),
-    #    tiap bab baru dimulai di halaman ganjil baru (section break oddPage),
-    #    dan gambar dari naskah asli (kalau ada) disisipkan lagi di posisi yang sama.
+    # 5. Masukkan Isi Naskah Multi-Bab (Daftar Isi bawaan naskah sudah dibuang,
+    #    begitu juga section SINOPSIS/TENTANG PENULIS bawaan naskah -- lihat
+    #    langkah 2b di atas), tiap bab baru dimulai di halaman ganjil baru
+    #    (section break oddPage), dan gambar dari naskah asli (kalau ada)
+    #    disisipkan lagi di posisi yang sama.
     _insert_manuscript_sections(document, sections, format_config=format_config, images=images)
 
-    # 6. Isi "Tentang Penulis" (opsional, diinput lewat form)
-    if tentang_penulis_text and tentang_penulis_text.strip():
-        _replace_tentang_penulis(document, tentang_penulis_text)
+    # 6. Isi "Tentang Penulis" (dari form, ATAU fallback dari section "TENTANG
+    #    PENULIS" yang otomatis terdeteksi di naskah asli).
+    final_tentang_penulis = (
+        tentang_penulis_text if tentang_penulis_text and tentang_penulis_text.strip() else auto_tentang_penulis
+    )
+    if final_tentang_penulis and final_tentang_penulis.strip():
+        _replace_tentang_penulis(document, final_tentang_penulis)
+    # Jadikan heading "TENTANG PENULIS" style Heading asli (sama seperti
+    # "KATA PENGANTAR" di atas) supaya (a) warnanya konsisten hitam-bold, dan
+    # (b) MASUK ke Daftar Isi otomatis -- field TOC (\o "1-3") cuma menyaring
+    # paragraf ber-style Heading 1-3 asli, bukan style custom bawaan template.
+    # force_page_break=True: WAJIB, karena posisi heading ini jatuh SETELAH
+    # bab terakhir yang jumlah & panjangnya beda-beda tiap naskah (bisa 5 bab,
+    # bisa 40 bab) -- tanpa dipaksa, "Tentang Penulis" berisiko nyambung di
+    # halaman yang sama dengan akhir bab terakhir alih-alih di halaman barunya
+    # sendiri.
+    _style_front_matter_heading(document, "TENTANG PENULIS", force_page_break=True)
 
     # 7. Daftar Isi otomatis: taruh TEPAT SETELAH Kata Pengantar (di posisi
     #    heading "DAFTAR ISI" bawaan template), menggantikan daftar isi
@@ -157,6 +274,8 @@ def _apply_simple_replacements(paragraph: Paragraph, replacements: dict) -> None
         if old in new_text:
             new_text = new_text.replace(old, new)
 
+    new_text = _sanitize_docx_text(new_text)
+
     if new_text != text:
         if paragraph.runs:
             paragraph.runs[0].text = new_text
@@ -166,12 +285,13 @@ def _apply_simple_replacements(paragraph: Paragraph, replacements: dict) -> None
 
 def _insert_qrcbn(document: Document, qrcbn: str) -> None:
     """Sisipkan baris QRCBN tepat setelah baris ISBN di halaman francis."""
+    safe_qrcbn = _sanitize_docx_text(qrcbn)
     for i, paragraph in enumerate(document.paragraphs):
         if paragraph.text.strip().startswith("ISBN:"):
             anchor_element = paragraph._p
             new_p = document.add_paragraph()
             anchor_element.addnext(new_p._p)
-            new_p.text = f"QRCBN: {qrcbn}"
+            new_p.text = f"QRCBN: {safe_qrcbn}" if safe_qrcbn else "QRCBN:"
             for run in paragraph.runs:
                 # samakan format (font/size) dengan baris ISBN di atasnya
                 if run.text.strip():
@@ -180,6 +300,97 @@ def _insert_qrcbn(document: Document, qrcbn: str) -> None:
                         new_run.font.size = run.font.size
                     break
             return
+
+
+def _extract_named_sections(
+    sections: list[tuple[str, list[str]]],
+    names: tuple[str, ...],
+) -> tuple[str, str, list[tuple[str, list[str]]]]:
+    """Pisahkan bagian "SINOPSIS" / "TENTANG PENULIS" tulisan penulis sendiri
+    dari daftar section isi naskah biasa hasil naskah_parser, DALAM DUA BENTUK:
+
+    (1) SECTION TERSENDIRI -- naskah_parser sempat mendeteksinya sebagai
+        section/heading sendiri (judul section == persis salah satu nama di
+        `names`). Ini terjadi kalau baris itu memang dikenali sebagai heading
+        oleh naskah_parser.
+
+    (2) BARIS BIASA DI TENGAH BODY TEXT suatu bab -- ternyata BENTUK YANG
+        LEBIH SERING TERJADI: penulis menulis kata "TENTANG PENULIS" /
+        "SINOPSIS" sebagai paragraf polos di file .docx sumber (bukan pakai
+        style Heading Word), sehingga naskah_parser (yang mendeteksi heading
+        berdasarkan STYLE, bukan isi teks) TIDAK PERNAH menganggapnya sebagai
+        section/judul sendiri -- baris itu ikut lolos sebagai body_lines
+        biasa milik bab manapun yang kebetulan sedang berjalan saat baris itu
+        muncul di naskah. Kasus (1) saja TIDAK CUKUP menangkap ini karena
+        baris tsb tidak pernah jadi "judul section" untuk mulai dengan --
+        makanya perlu di-scan juga di DALAM body_lines tiap section.
+
+    Dalam bentuk (2), begitu baris penanda ("SINOPSIS" / "TENTANG PENULIS")
+    ditemukan di tengah body_lines, SEMUA baris sesudahnya (lintas section,
+    sampai ada penanda lain atau naskah habis) dianggap MILIK penanda
+    tersebut -- karena di praktiknya bagian ini biasa ditulis penulis di
+    paling akhir naskah tanpa heading baru lagi sesudahnya utk menutupnya.
+
+    Hanya baris yang PERSIS cocok (case-insensitive, sesudah di-strip) yang
+    dianggap penanda, supaya tidak salah menangkap kalimat isi bab yang
+    kebetulan memuat kata "sinopsis"/"tentang penulis" di tengah kalimat.
+
+    Return: (gabungan_baris_sinopsis, gabungan_baris_tentang_penulis, sisa_sections)
+    """
+    normalized_targets = {name.strip().upper() for name in names}
+    collected: dict[str, list[str]] = {name: [] for name in normalized_targets}
+    remaining: list[tuple[str, list[str]]] = []
+
+    # Penanda BUKAN-target yang menandai "akhir" penampungan penanda aktif --
+    # kalau tidak ada ini, begitu satu penanda aktif (mis. SINOPSIS) ketemu,
+    # SEMUA baris sesudahnya (termasuk bagian lain milik naskah yg sah, mis.
+    # DAFTAR PUSTAKA/bibliografi) ikut tersedot masuk jadi "isi sinopsis" --
+    # padahal daftar pustaka itu bagian isi buku yang sah dan harus tetap
+    # muncul sebagai body biasa, bukan ikut hilang ditelan bucket sinopsis.
+    stop_markers = {
+        "DAFTAR PUSTAKA", "DAFTAR REFERENSI", "REFERENSI", "BIBLIOGRAFI", "DAFTAR RUJUKAN",
+    }
+
+    # Penanda yang sedang "aktif" -- begitu ketemu baris penanda di tengah
+    # body_lines, baris-baris SESUDAHNYA (termasuk lintas section berikutnya)
+    # ditampung ke situ, sampai ketemu penanda lain (target ATAU stop_markers)
+    # atau naskah habis.
+    active_marker: str | None = None
+
+    for title, body_lines in sections:
+        title_key = (title or "").strip().upper()
+
+        if title_key in normalized_targets:
+            # Kasus (1): section ini sendiri memang persis SINOPSIS/TENTANG
+            # PENULIS -- seluruh isinya milik penanda itu, judul section
+            # tidak perlu diproses lagi sebagai body biasa.
+            collected[title_key].extend(body_lines)
+            active_marker = None
+            continue
+
+        new_body_lines: list[str] = []
+        for line in body_lines:
+            line_key = line.strip().upper()
+            if line_key in normalized_targets:
+                # Kasus (2): baris penanda ketemu DI TENGAH body_lines.
+                active_marker = line_key
+                continue
+            if line_key in stop_markers:
+                # Balik ke mode isi bab biasa -- baris ini & sesudahnya tetap
+                # bagian sah dari naskah, JANGAN ikut tertelan bucket penanda.
+                active_marker = None
+                new_body_lines.append(line)
+                continue
+            if active_marker is not None:
+                collected[active_marker].append(line)
+            else:
+                new_body_lines.append(line)
+
+        remaining.append((title, new_body_lines))
+
+    auto_sinopsis = "\n".join(collected.get("SINOPSIS", [])).strip()
+    auto_tentang_penulis = "\n".join(collected.get("TENTANG PENULIS", [])).strip()
+    return auto_sinopsis, auto_tentang_penulis, remaining
 
 
 def _insert_sinopsis(document: Document, sinopsis_text: str) -> None:
@@ -193,7 +404,7 @@ def _insert_sinopsis(document: Document, sinopsis_text: str) -> None:
     if anchor_paragraph is None:
         anchor_paragraph = document.paragraphs[-1]
 
-    lines = [_normalize_spacing(line) for line in sinopsis_text.splitlines() if line.strip()]
+    lines = [_normalize_spacing(line) for line in _sanitize_docx_text(sinopsis_text).splitlines() if line.strip()]
     if not lines:
         return
 
@@ -224,6 +435,27 @@ def _insert_sinopsis(document: Document, sinopsis_text: str) -> None:
     anchor_paragraph.paragraph_format.page_break_before = True
 
 
+def _sanitize_docx_text(text: str) -> str:
+    """Bersihkan karakter kontrol yang tidak boleh ada di XML/Word sebelum ditulis ke DOCX."""
+    if not text:
+        return ""
+
+    if not isinstance(text, str):
+        text = str(text)
+
+    sanitized_chars = []
+    for char in text:
+        code_point = ord(char)
+        if code_point in (9, 10, 13):
+            sanitized_chars.append(char)
+        elif 0 <= code_point <= 31 or 127 <= code_point <= 159:
+            sanitized_chars.append(" ")
+        else:
+            sanitized_chars.append(char)
+
+    return "".join(sanitized_chars)
+
+
 def _normalize_spacing(text: str) -> str:
     """Rapikan spasi ganda/berlebih jadi satu spasi, buang spasi awal-akhir.
 
@@ -232,11 +464,14 @@ def _normalize_spacing(text: str) -> str:
     ketikan manual (bukan field TOC Word) yang lalu ke-copy-paste sebagai
     teks biasa.
     """
+    text = _sanitize_docx_text(text)
     text = re.sub(r"\t+\d+\s*$", "", text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
-def _style_front_matter_heading(document: Document, label: str, level: str = "Heading 1") -> None:
+def _style_front_matter_heading(
+    document: Document, label: str, level: str = "Heading 1", force_page_break: bool = False
+) -> None:
     """Paksa paragraf placeholder front-matter (mis. 'KATA PENGANTAR') jadi
     Heading Word beneran + warna hitam.
 
@@ -245,6 +480,15 @@ def _style_front_matter_heading(document: Document, label: str, level: str = "He
     kena fix hitam yang dipasang utk judul bab, dan (2) tidak pernah muncul
     di Daftar Isi otomatis karena field TOC (\\o "1-3") cuma menyaring
     paragraf ber-style Heading 1-3, bukan berdasar teks/bold manual.
+
+    `force_page_break`: kalau True, paragraf heading ini SELALU dipaksa mulai
+    di halaman baru (page_break_before), apapun isi/panjang bagian sebelumnya.
+    Wajib True untuk heading yang posisinya di dokumen bergantung pada konten
+    dinamis di depannya (mis. "TENTANG PENULIS" yang selalu jatuh setelah
+    bab terakhir -- jumlah & panjang bab beda-beda tiap naskah, jadi kalau
+    tidak dipaksa, halaman terakhir bab terakhir yang kebetulan masih ada
+    sisa ruang bikin "TENTANG PENULIS" nyambung di halaman yang sama alih-alih
+    mulai halaman barunya sendiri).
     """
     for paragraph in document.paragraphs:
         if paragraph.text.strip().upper() != label.upper():
@@ -258,12 +502,14 @@ def _style_front_matter_heading(document: Document, label: str, level: str = "He
         for run in paragraph.runs:
             run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
             run.font.bold = True
+        if force_page_break:
+            paragraph.paragraph_format.page_break_before = True
         break
 
 
 def _replace_kata_pengantar(document: Document, kata_pengantar_text: str) -> None:
     """Isi bagian Kata Pengantar sebelum Bab 1."""
-    lines = [_normalize_spacing(line) for line in kata_pengantar_text.splitlines() if line.strip()]
+    lines = [_normalize_spacing(line) for line in _sanitize_docx_text(kata_pengantar_text).splitlines() if line.strip()]
     if not lines:
         return
 
@@ -286,7 +532,7 @@ def _replace_kata_pengantar(document: Document, kata_pengantar_text: str) -> Non
 def _replace_tentang_penulis(document: Document, tentang_penulis_text: str) -> None:
     """Isi bagian 'Tentang Penulis' di akhir buku (placeholder ada di template,
     tepat setelah heading 'TENTANG PENULIS')."""
-    lines = [_normalize_spacing(line) for line in tentang_penulis_text.splitlines() if line.strip()]
+    lines = [_normalize_spacing(line) for line in _sanitize_docx_text(tentang_penulis_text).splitlines() if line.strip()]
     if not lines:
         return
 
@@ -321,7 +567,29 @@ def _insert_manuscript_sections(
             break
 
     if target_p is None:
-        target_p = document.add_paragraph()
+        # Placeholder "Judul Bab"/"(Isi naskah)" tidak ada di template ini.
+        # DULU: fallback-nya `document.add_paragraph()`, yang nambah paragraf
+        # baru di paling UJUNG DOKUMEN -- kalau template sudah punya heading
+        # "TENTANG PENULIS" di dekat akhir (lazim di template Guepedia), isi
+        # naskah/bab jadi ke-insert SETELAH "Tentang Penulis", membalik
+        # urutan yang seharusnya (Tentang Penulis harus di paling akhir,
+        # setelah bab terakhir, bukan sebelum bab pertama).
+        # SEKARANG: kalau placeholder tidak ketemu, coba dulu sisip TEPAT
+        # SEBELUM heading "TENTANG PENULIS" (kalau ada) supaya urutan buku
+        # tetap benar walau template lupa taruh placeholder-nya. Baru kalau
+        # itu juga tidak ada, fallback paling akhir ke ujung dokumen seperti
+        # sebelumnya (drpd gagal total).
+        tentang_penulis_heading = None
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip().upper() == "TENTANG PENULIS":
+                tentang_penulis_heading = paragraph
+                break
+
+        if tentang_penulis_heading is not None:
+            target_p = document.add_paragraph()
+            tentang_penulis_heading._p.addprevious(target_p._p)
+        else:
+            target_p = document.add_paragraph()
 
     if not sections:
         p_element = target_p._element
@@ -370,7 +638,8 @@ def _insert_manuscript_sections(
             p_new = _new_paragraph_after(anchor_element)
             anchor_element = p_new._p
 
-            p_new.text = _normalize_spacing(section_title)
+            safe_title = _normalize_spacing(section_title)
+            p_new.text = safe_title
 
             if is_bab:
                 try:
@@ -380,6 +649,7 @@ def _insert_manuscript_sections(
                 p_new.alignment = heading_alignment
                 p_new.paragraph_format.space_before = Pt(18)
                 p_new.paragraph_format.space_after = Pt(12)
+                p_new.paragraph_format.page_break_before = True
                 heading_font_size = font_size + 4
             elif is_sub_heading:
                 try:
