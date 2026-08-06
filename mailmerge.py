@@ -181,11 +181,29 @@ def generate_book_docx(
     if qrcbn:
         _insert_qrcbn(document, qrcbn)
 
-    # 3. Isi Sinopsis (opsional — dari input manual/upload, hasil generate AI
-    #    di app.py, ATAU section "SINOPSIS" yang otomatis terdeteksi di naskah asli).
-    final_sinopsis = sinopsis_text if sinopsis_text and sinopsis_text.strip() else auto_sinopsis
-    if final_sinopsis and final_sinopsis.strip():
-        _insert_sinopsis(document, final_sinopsis)
+    # 2. Siapkan baris & gambar naskah, buang front matter buatan penulis
+    #    sendiri (Kata Pengantar & listing Daftar Isi) karena dokumen final
+    #    sudah punya slotnya sendiri (placeholder Kata Pengantar + field TOC
+    #    otomatis). Kalau sumbernya file .docx asli, pakai parser yang sadar
+    #    STYLE Word (mengenali heading apapun teksnya, bukan cuma "Bab N")
+    #    dan ikut mempertahankan gambar inline di naskah.
+    images: dict[str, bytes] = {}
+    if source_docx_bytes is not None:
+        source_doc = Document(io.BytesIO(source_docx_bytes))
+        auto_kata_pengantar, sections, images = extract_docx_structured(source_doc)
+        if len(sections) == 1 and not is_heading_line(sections[0][0]):
+            only_title, only_body = sections[0]
+            sections = [(chapter_title or only_title or "Bab 1", only_body)]
+    elif naskah_text.strip():
+        raw_lines = [line.strip() for line in naskah_text.splitlines() if line.strip()]
+        auto_kata_pengantar, body_lines = strip_front_matter(raw_lines)
+        sections = split_into_sections(body_lines, fallback_title=chapter_title)
+    else:
+        auto_kata_pengantar, sections = "", []
+
+    # 3. Isi Sinopsis (opsional — dari input manual/upload ATAU hasil generate AI di app.py)
+    if sinopsis_text and sinopsis_text.strip():
+        _insert_sinopsis(document, sinopsis_text)
 
     # 4. Isi Kata Pengantar — pakai input manual dari form kalau diisi,
     #    kalau kosong pakai yang otomatis terdeteksi dari naskah asli.
@@ -206,23 +224,9 @@ def generate_book_docx(
     #    disisipkan lagi di posisi yang sama.
     _insert_manuscript_sections(document, sections, format_config=format_config, images=images)
 
-    # 6. Isi "Tentang Penulis" (dari form, ATAU fallback dari section "TENTANG
-    #    PENULIS" yang otomatis terdeteksi di naskah asli).
-    final_tentang_penulis = (
-        tentang_penulis_text if tentang_penulis_text and tentang_penulis_text.strip() else auto_tentang_penulis
-    )
-    if final_tentang_penulis and final_tentang_penulis.strip():
-        _replace_tentang_penulis(document, final_tentang_penulis)
-    # Jadikan heading "TENTANG PENULIS" style Heading asli (sama seperti
-    # "KATA PENGANTAR" di atas) supaya (a) warnanya konsisten hitam-bold, dan
-    # (b) MASUK ke Daftar Isi otomatis -- field TOC (\o "1-3") cuma menyaring
-    # paragraf ber-style Heading 1-3 asli, bukan style custom bawaan template.
-    # force_page_break=True: WAJIB, karena posisi heading ini jatuh SETELAH
-    # bab terakhir yang jumlah & panjangnya beda-beda tiap naskah (bisa 5 bab,
-    # bisa 40 bab) -- tanpa dipaksa, "Tentang Penulis" berisiko nyambung di
-    # halaman yang sama dengan akhir bab terakhir alih-alih di halaman barunya
-    # sendiri.
-    _style_front_matter_heading(document, "TENTANG PENULIS", force_page_break=True)
+    # 6. Isi "Tentang Penulis" (opsional, diinput lewat form)
+    if tentang_penulis_text and tentang_penulis_text.strip():
+        _replace_tentang_penulis(document, tentang_penulis_text)
 
     # 7. Daftar Isi otomatis: taruh TEPAT SETELAH Kata Pengantar (di posisi
     #    heading "DAFTAR ISI" bawaan template), menggantikan daftar isi

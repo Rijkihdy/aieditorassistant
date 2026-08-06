@@ -405,12 +405,15 @@ def _inject_dynamic_page_numbering(document: Document) -> None:
 
     if len(sections) == 1:
         _set_section_page_number_type(sections[0], fmt="decimal", start=1)
-        _set_all_footer_variants_page_number(sections[0])
+        _set_all_footer_variants_page_number(sections[0], include_first_page=False)
         return
 
-    # Section pertama: halaman depan, angka romawi kecil.
+    # Section pertama: halaman depan, angka romawi kecil. Halaman cover
+    # (first_page_footer) SENGAJA dilewati -- lihat docstring
+    # `_set_all_footer_variants_page_number` -- supaya logo penerbit di
+    # cover tidak ikut ketimpa field nomor halaman.
     _set_section_page_number_type(sections[0], fmt="lowerRoman", start=1)
-    _set_all_footer_variants_page_number(sections[0])
+    _set_all_footer_variants_page_number(sections[0], include_first_page=False)
 
     # Section kedua dst.: angka arab. Restart ke 1 cuma di section kedua
     # (awal isi naskah); section berikutnya melanjutkan penomoran otomatis
@@ -494,8 +497,8 @@ def qn_localname(tag: str) -> str:
     return f"w:{local}"
 
 
-def _set_all_footer_variants_page_number(section) -> None:
-    """Tulis field PAGE dinamis ke SEMUA varian footer section ini.
+def _set_all_footer_variants_page_number(section, include_first_page: bool = True) -> None:
+    """Tulis field PAGE dinamis ke varian footer section ini.
 
     Template buku biasanya mengaktifkan "different odd & even pages" (margin
     cermin, posisi nomor halaman gantian kiri/kanan). Kalau begitu, halaman
@@ -506,6 +509,12 @@ def _set_all_footer_variants_page_number(section) -> None:
     berubah / sama terus / dobel dengan halaman lain. Sekarang ketiga varian
     ditulis field PAGE yang sama supaya penomoran selalu ikut halaman
     fisiknya, bukan konten statis lama.
+
+    `include_first_page=False` dipakai KHUSUS untuk halaman sampul/cover
+    (section pertama dokumen): halaman cover secara konvensi penerbitan
+    memang tidak diberi nomor halaman, dan `first_page_footer`-nya berisi
+    elemen non-teks (mis. logo penerbit) yang HARUS tetap utuh -- kalau ikut
+    ditimpa field PAGE seperti varian lain, logo itu akan terhapus.
     """
     _force_independent_definition(section.footer)
     _set_footer_page_number(section.footer)
@@ -514,10 +523,11 @@ def _set_all_footer_variants_page_number(section) -> None:
     # (Word butuh flag ini di document.settings). Aksesnya lewat python-docx
     # aman dipanggil kapan pun; kalau tidak dipakai Word akan mengabaikannya,
     # jadi lebih aman selalu menyamakan isinya drpd meninggalkan versi lama.
-    for variant in (
-        getattr(section, "even_page_footer", None),
-        getattr(section, "first_page_footer", None),
-    ):
+    variants = [getattr(section, "even_page_footer", None)]
+    if include_first_page:
+        variants.append(getattr(section, "first_page_footer", None))
+
+    for variant in variants:
         if variant is None:
             continue
         try:
@@ -525,6 +535,8 @@ def _set_all_footer_variants_page_number(section) -> None:
         except Exception:
             pass
         _set_footer_page_number(variant)
+
+
 
 
 def _set_footer_page_number(footer) -> None:
